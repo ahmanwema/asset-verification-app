@@ -39,6 +39,24 @@ export class AssetDB extends Dexie {
       photos: 'id, entryId, exerciseId, syncStatus',
       meta: 'key',
     })
+
+    // v2 adds the detailed description fields. No index changes, but existing
+    // entries are backfilled so reports never print "undefined".
+    this.version(2)
+      .stores({})
+      .upgrade(async (tx) => {
+        await tx
+          .table('entries')
+          .toCollection()
+          .modify((entry: Record<string, unknown>) => {
+            entry.material ??= ''
+            entry.colour ??= ''
+            entry.itemType ??= ''
+            entry.additionalFeatures ??= ''
+            entry.description ??= ''
+            entry.specificPosition ??= ''
+          })
+      })
   }
 }
 

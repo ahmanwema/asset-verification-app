@@ -42,6 +42,9 @@ beforeAll(async () => {
       UPLOAD_DIR: path.join(tmpDir, 'uploads'),
       ADMIN_EMAIL: 'admin@test.local',
       ADMIN_PASSWORD: 'secret123',
+      // Pin recognition off whatever the developer has in their own .env:
+      // an already-set variable wins over the file, empty string included.
+      OPENAI_API_KEY: '',
     },
     stdio: 'ignore',
   })
@@ -218,6 +221,36 @@ describe('conflicts', () => {
     const pull = await sync(token, 0, {})
     const row = pull.body.changes.entries.find((e) => e.id === 'en_del')
     expect(row.deleted).toBe(true)
+  })
+})
+
+describe('vision routes', () => {
+  it('reports status without auth, and without a key configured', async () => {
+    const res = await fetch(`${BASE}/vision/status`)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.configured).toBe(false) // no OPENAI_API_KEY in this test server
+    expect(body.models).toEqual(['gpt-4o', 'gpt-4o-mini'])
+  })
+
+  it('refuses an unauthenticated identify request', async () => {
+    const res = await fetch(`${BASE}/vision/identify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: 'AAAA' }),
+    })
+    expect(res.status).toBe(401)
+  })
+
+  it('tells a signed-in device that recognition is not set up', async () => {
+    const { body: auth } = await login()
+    const res = await fetch(`${BASE}/vision/identify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.token}` },
+      body: JSON.stringify({ image: 'AAAA' }),
+    })
+    expect(res.status).toBe(503)
+    expect((await res.json()).error).toBe('vision-not-configured')
   })
 })
 

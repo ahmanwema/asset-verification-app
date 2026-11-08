@@ -94,6 +94,23 @@ export interface InspectionEntry {
   conditionBreakdown?: ConditionBreakdown
   photoIds: string[]
   remarks: string
+
+  // --- Detailed description fields (optional, captured under "More details") ---
+  /** What the item is made of, e.g. "Wooden seat and backrest with metal frame". */
+  material: string
+  /** Visible colours, e.g. "Light Brown / Grey". */
+  colour: string
+  /** Sub-type within the asset type, e.g. "Top-Loading Water Dispenser". */
+  itemType: string
+  /** Notable extras, e.g. "pen groove on tabletop", "three water taps". */
+  additionalFeatures: string
+  /** Full sentence describing the item physically. */
+  description: string
+  /** Where it sits in the room, e.g. "Front left corner", "Mounted on east wall". */
+  specificPosition: string
+  /** Set when the fields were pre-filled by photo recognition and not yet edited. */
+  aiAssisted?: boolean
+
   inspectorId: string
   inspectedAt: number
   isUnlistedItem: boolean

@@ -16,6 +16,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
+import { handleVisionIdentify, visionStatus } from './vision.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
@@ -24,6 +25,14 @@ const ROOT = path.resolve(__dirname, '..')
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data')
 const UPLOAD_DIR = process.env.UPLOAD_DIR ? path.resolve(process.env.UPLOAD_DIR) : path.join(__dirname, 'uploads')
 const DIST_DIR = path.join(ROOT, 'dist')
+
+// Reads .env without a dotenv dependency (Node 20.12+/21+). Real environment
+// variables already set always win.
+try {
+  process.loadEnvFile(path.join(ROOT, '.env'))
+} catch {
+  /* no .env file — fine, the sync server works without one */
+}
 
 const PORT = Number(process.env.PORT || 4000)
 const MAX_BODY = 16 * 1024 * 1024
@@ -424,6 +433,23 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
+    if (pathname === '/api/vision/status') {
+      sendJson(res, 200, visionStatus())
+      return
+    }
+
+    if (pathname === '/api/vision/identify' && req.method === 'POST') {
+      const user = userForRequest(req)
+      if (!user) {
+        sendJson(res, 401, { error: 'unauthorized' })
+        return
+      }
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}')
+      const { status, payload } = await handleVisionIdentify(body)
+      sendJson(res, status, payload)
+      return
+    }
+
     if (pathname.startsWith('/api/')) {
       sendJson(res, 404, { error: 'unknown-endpoint' })
       return
@@ -442,6 +468,12 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`[server] sync API on http://localhost:${PORT}/api`)
   console.log(`[server] data: ${DATA_DIR}`)
+  const vision = visionStatus()
+  console.log(
+    vision.configured
+      ? `[vision] photo recognition enabled (${vision.model})`
+      : '[vision] disabled — set OPENAI_API_KEY in .env to enable photo recognition',
+  )
   if (fs.existsSync(DIST_DIR)) console.log(`[server] serving PWA from ${DIST_DIR}`)
   else console.log('[server] dist/ not built yet — run `npm run build` to serve the app from here')
 })

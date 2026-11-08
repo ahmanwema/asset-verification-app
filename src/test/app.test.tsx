@@ -1,11 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { BrowserRouter } from 'react-router-dom'
 import App from '../App'
 import { I18nProvider } from '../i18n'
 import { SessionProvider } from '../state/session'
 import { SEED_PASSWORD, seedIfEmpty } from '../db/seed'
-import { db } from '../db/db'
+import { db, setMeta } from '../db/db'
 import { resetDb } from './fixtures'
 
 function renderApp() {
@@ -108,6 +108,183 @@ describe('inspection walkthrough', () => {
       expect(entries).toHaveLength(1)
       expect(entries[0].quantity).toBe(3)
       expect(entries[0].tagNumbers).toEqual(['SC-1F-P3-001', 'SC-1F-P3-002', 'SC-1F-P3-003'])
+    })
+  })
+})
+
+describe('more details', () => {
+  async function openChairForm() {
+    await signIn()
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+  }
+
+  it('keeps the detail fields behind a collapsed section so the quick path stays short', async () => {
+    await openChairForm()
+    expect(await screen.findByText('More details')).toBeTruthy()
+    // Collapsed by default: the inputs are not mounted.
+    expect(screen.queryByLabelText('Material')).toBeNull()
+
+    fireEvent.click(screen.getByText('More details'))
+    expect(await screen.findByLabelText('Material')).toBeTruthy()
+    expect(screen.getByLabelText('Colour')).toBeTruthy()
+    expect(screen.getByLabelText('Item type')).toBeTruthy()
+    expect(screen.getByLabelText('Additional features')).toBeTruthy()
+    expect(screen.getByLabelText('Position in room')).toBeTruthy()
+    expect(screen.getByLabelText('Description')).toBeTruthy()
+  })
+
+  it('saves the detail fields onto the entry', async () => {
+    await openChairForm()
+    fireEvent.click(await screen.findByText('More details'))
+
+    fireEvent.change(await screen.findByLabelText('Material'), {
+      target: { value: 'Wooden seat and backrest with metal frame' },
+    })
+    fireEvent.change(screen.getByLabelText('Colour'), { target: { value: 'Light Brown / Grey' } })
+    fireEvent.change(screen.getByLabelText('Position in room'), { target: { value: 'Front left corner' } })
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Single-seater student chair with grey metal legs' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(async () => {
+      const [entry] = await db.entries.toArray()
+      expect(entry.material).toBe('Wooden seat and backrest with metal frame')
+      expect(entry.colour).toBe('Light Brown / Grey')
+      expect(entry.specificPosition).toBe('Front left corner')
+      expect(entry.description).toBe('Single-seater student chair with grey metal legs')
+    })
+  })
+
+  it('reopens the section for an entry that already has details', async () => {
+    await openChairForm()
+    fireEvent.click(await screen.findByText('More details'))
+    fireEvent.change(await screen.findByLabelText('Colour'), { target: { value: 'Grey' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    // Wait for the room checklist to show the saved entry before reopening it,
+    // so the assertion is not racing the save round-trip.
+    await screen.findByText('1/16 items checked', undefined, { timeout: 5000 })
+    fireEvent.click(screen.getByText('Student Chair'))
+    expect(await screen.findByDisplayValue('Grey', undefined, { timeout: 5000 })).toBeTruthy()
+  })
+})
+
+describe('capture & identify', () => {
+  const photo = () => new File([new Uint8Array([1, 2, 3])], 'item.jpg', { type: 'image/jpeg' })
+
+  async function openChairForm() {
+    await signIn()
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+    return (await screen.findByText('Capture & identify')).closest('button') as HTMLElement
+  }
+
+  function fileInputFor(button: HTMLElement): HTMLInputElement {
+    // The hidden camera input sits directly after its button.
+    return button.nextElementSibling as HTMLInputElement
+  }
+
+  function stubVision(result: Record<string, unknown>, model = 'gpt-4o') {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ model, result }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    )
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('says so plainly when the device is not connected to the sync server', async () => {
+    const button = await openChairForm()
+    fireEvent.change(fileInputFor(button), { target: { files: [photo()] } })
+
+    expect(await screen.findByText(/connect to the sync server/i)).toBeTruthy()
+  })
+
+  it('fills the form from the model response and can undo it', async () => {
+    await setMeta('syncToken', 'test-token')
+    stubVision({
+      assetTypeCode: 'SC',
+      itemName: 'Student Chair',
+      itemType: 'Single-seater student chair',
+      quantity: 4,
+      condition: 'F',
+      material: 'Wooden seat and backrest with metal frame',
+      colour: 'Light Brown / Grey',
+      brand: 'Furnico',
+      model: 'Classic',
+      serialNumber: 'SN-991',
+      additionalFeatures: 'Pen groove under the seat',
+      description: 'Single-seater student chair with grey metal legs',
+      specificPosition: 'Front left corner',
+      remarks: 'Scratches on the backrest',
+      confidence: 0.82,
+    })
+
+    const button = await openChairForm()
+    fireEvent.change(fileInputFor(button), { target: { files: [photo()] } })
+
+    // Quantity, serial and the detail fields all arrive pre-filled.
+    expect(await screen.findByDisplayValue('4')).toBeTruthy()
+    expect(await screen.findByDisplayValue('SN-991')).toBeTruthy()
+    expect(await screen.findByDisplayValue('Wooden seat and backrest with metal frame')).toBeTruthy()
+    expect(screen.getByDisplayValue('Front left corner')).toBeTruthy()
+    expect(screen.getByDisplayValue('Furnico')).toBeTruthy()
+
+    // The inspector is told to check the values rather than trust them.
+    expect(screen.getByText(/review every field/i)).toBeTruthy()
+
+    fireEvent.click(screen.getByText('Undo AI fill'))
+    await waitFor(() => expect(screen.queryByDisplayValue('SN-991')).toBeNull())
+    expect(screen.queryByDisplayValue('Wooden seat and backrest with metal frame')).toBeNull()
+    expect(screen.getByDisplayValue('1')).toBeTruthy() // quantity restored
+  })
+
+  it('marks the saved entry as AI assisted and keeps the photo', async () => {
+    await setMeta('syncToken', 'test-token')
+    stubVision(
+      {
+        assetTypeCode: 'SC',
+        itemName: 'Student Chair',
+        itemType: '',
+        quantity: 2,
+        condition: 'G',
+        material: 'Plastic',
+        colour: 'Blue',
+        brand: '',
+        model: '',
+        serialNumber: '',
+        additionalFeatures: '',
+        description: 'Blue plastic student chair',
+        specificPosition: '',
+        remarks: '',
+        confidence: 0.5,
+      },
+      'gpt-4o-mini',
+    )
+
+    const button = await openChairForm()
+    fireEvent.change(fileInputFor(button), { target: { files: [photo()] } })
+    await screen.findByDisplayValue('Blue plastic student chair')
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(async () => {
+      const [entry] = await db.entries.toArray()
+      expect(entry.aiAssisted).toBe(true)
+      expect(entry.quantity).toBe(2)
+      expect(entry.material).toBe('Plastic')
+      expect(entry.photoIds).toHaveLength(1)
     })
   })
 })

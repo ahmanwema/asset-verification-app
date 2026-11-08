@@ -42,13 +42,18 @@ export function Field({
   error?: string
   children: ReactNode
 }) {
+  // The hint sits outside the <label> on purpose: nested, it becomes part of the
+  // accessible name, so a screen reader would read the whole example sentence
+  // back as the field's label.
   return (
-    <label className="block">
-      <span className="field-label">{label}</span>
-      {children}
+    <div>
+      <label className="block">
+        <span className="field-label">{label}</span>
+        {children}
+      </label>
       {hint && !error && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
       {error && <span className="mt-1 block text-xs font-semibold text-red-600">{error}</span>}
-    </label>
+    </div>
   )
 }
 

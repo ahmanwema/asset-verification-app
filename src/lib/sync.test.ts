@@ -43,6 +43,9 @@ beforeAll(async () => {
       UPLOAD_DIR: path.join(tmpDir, 'uploads'),
       ADMIN_EMAIL: 'admin@test.local',
       ADMIN_PASSWORD: 'secret123',
+      // Pin recognition off whatever the developer has in their own .env:
+      // an already-set variable wins over the file, empty string included.
+      OPENAI_API_KEY: '',
     },
     stdio: 'ignore',
   })

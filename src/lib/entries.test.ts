@@ -70,6 +70,46 @@ describe('saveEntry', () => {
   })
 })
 
+describe('detail fields', () => {
+  it('stores and trims every "more details" field', async () => {
+    const entry = await saveEntry(
+      draft({
+        material: '  Wooden seat and backrest with metal frame  ',
+        colour: 'Light Brown / Grey',
+        itemType: 'Single-seater student chair',
+        additionalFeatures: 'Pen groove on tabletop',
+        description: 'Single-seater student chair with wooden seat and grey metal legs',
+        specificPosition: 'Front left corner',
+      }),
+    )
+    expect(entry.material).toBe('Wooden seat and backrest with metal frame')
+    expect(entry.colour).toBe('Light Brown / Grey')
+    expect(entry.itemType).toBe('Single-seater student chair')
+    expect(entry.additionalFeatures).toBe('Pen groove on tabletop')
+    expect(entry.description).toBe('Single-seater student chair with wooden seat and grey metal legs')
+    expect(entry.specificPosition).toBe('Front left corner')
+
+    const stored = await db.entries.get(entry.id)
+    expect(stored?.material).toBe('Wooden seat and backrest with metal frame')
+  })
+
+  it('defaults them to empty strings when the quick workflow skips them', async () => {
+    const entry = await saveEntry(draft())
+    expect(entry.material).toBe('')
+    expect(entry.colour).toBe('')
+    expect(entry.itemType).toBe('')
+    expect(entry.additionalFeatures).toBe('')
+    expect(entry.description).toBe('')
+    expect(entry.specificPosition).toBe('')
+    expect(entry.aiAssisted).toBeUndefined()
+  })
+
+  it('keeps the AI-assisted marker on the record for the register', async () => {
+    const entry = await saveEntry(draft({ aiAssisted: true, description: 'From a photo' }))
+    expect(entry.aiAssisted).toBe(true)
+  })
+})
+
 describe('not present', () => {
   it('records quantity 0 with no tags, and is idempotent per asset type', async () => {
     const first = await markNotPresent({

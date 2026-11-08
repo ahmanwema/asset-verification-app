@@ -1,10 +1,18 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, uid } from '../db/db'
 import { sha256 } from '../lib/hash'
 import { deriveCode, deriveRoomCode } from '../lib/tags'
 import { formatBytes, storageEstimate } from '../lib/photos'
 import { resetLocalData } from '../lib/sync'
+import {
+  VISION_MODELS,
+  checkVisionAvailability,
+  getVisionModel,
+  setVisionModel,
+  type VisionAvailability,
+  type VisionModel,
+} from '../lib/vision'
 import { useSession } from '../state/session'
 import { useT } from '../i18n'
 import {
@@ -693,6 +701,66 @@ function TeamTab({ canEdit, flash }: { canEdit: boolean; flash: (m: string) => v
 
 // ---------------------------------------------------------------- data -----
 
+/** Photo recognition settings. The API key itself lives only on the server. */
+function VisionSettings() {
+  const t = useT()
+  const [availability, setAvailability] = useState<VisionAvailability | null | undefined>(undefined)
+  const [model, setModel] = useState<VisionModel | ''>('')
+
+  useEffect(() => {
+    let cancelled = false
+    void checkVisionAvailability().then((a) => {
+      if (!cancelled) setAvailability(a)
+    })
+    void getVisionModel().then((m) => {
+      if (!cancelled) setModel(m ?? '')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const status =
+    availability === undefined
+      ? t('common.loading')
+      : availability === null
+        ? t('ai.notConnected')
+        : availability.configured
+          ? `${t('ai.statusReady')} · ${availability.model}`
+          : t('ai.statusMissingKey')
+
+  return (
+    <Card className="space-y-3 p-4">
+      <SectionTitle>{t('ai.section')}</SectionTitle>
+      <p className="flex items-center gap-2 text-sm">
+        <span
+          className={`h-2.5 w-2.5 rounded-full ${
+            availability?.configured ? 'bg-emerald-500' : 'bg-slate-300'
+          }`}
+        />
+        <span className="text-slate-600">{status}</span>
+      </p>
+      <Field label={t('ai.model')} hint={t('ai.modelHint')}>
+        <Select
+          value={model}
+          onChange={(e) => {
+            const next = (e.target.value || null) as VisionModel | null
+            setModel(next ?? '')
+            void setVisionModel(next)
+          }}
+        >
+          <option value="">{`${t('common.none')} — ${availability?.model ?? 'gpt-4o'}`}</option>
+          {VISION_MODELS.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </Select>
+      </Field>
+    </Card>
+  )
+}
+
 function DataTab() {
   const t = useT()
   const storage = useLiveQuery(() => storageEstimate(), [])
@@ -732,6 +800,8 @@ function DataTab() {
           </p>
         )}
       </Card>
+
+      <VisionSettings />
 
       <Button
         variant="danger"

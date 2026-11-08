@@ -26,6 +26,13 @@ export interface EntryDraft {
   condition: Condition
   conditionBreakdown?: ConditionBreakdown
   remarks: string
+  material?: string
+  colour?: string
+  itemType?: string
+  additionalFeatures?: string
+  description?: string
+  specificPosition?: string
+  aiAssisted?: boolean
   inspectorId: string
   notPresent: boolean
   /** Manual tag numbers override auto-generation when provided. */
@@ -91,6 +98,13 @@ export async function saveEntry(draft: EntryDraft): Promise<InspectionEntry> {
         : undefined,
     photoIds: draft.photoIds ?? existing?.photoIds ?? [],
     remarks: draft.remarks.trim(),
+    material: (draft.material ?? '').trim(),
+    colour: (draft.colour ?? '').trim(),
+    itemType: (draft.itemType ?? '').trim(),
+    additionalFeatures: (draft.additionalFeatures ?? '').trim(),
+    description: (draft.description ?? '').trim(),
+    specificPosition: (draft.specificPosition ?? '').trim(),
+    aiAssisted: draft.aiAssisted ?? existing?.aiAssisted,
     inspectorId: draft.inspectorId,
     inspectedAt: existing?.inspectedAt ?? Date.now(),
     isUnlistedItem: draft.isUnlistedItem,

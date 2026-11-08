@@ -8,6 +8,7 @@ import { ValidationError, deleteEntry, saveEntry } from '../lib/entries'
 import { allocateTagNumbers, deriveCode } from '../lib/tags'
 import { breakdownIsValid } from '../lib/queries'
 import { blobToArrayBuffer, compressImage, photoBlob } from '../lib/photos'
+import { identifyPhoto } from '../lib/vision'
 import {
   Button,
   CONDITION_STYLE,
@@ -28,6 +29,23 @@ interface DraftPhoto {
   width: number
   height: number
   persisted: boolean
+}
+
+/** Everything photo recognition may overwrite, kept so "Undo AI fill" is exact. */
+interface FormSnapshot {
+  quantity: number
+  condition: Condition
+  serials: string[]
+  brand: string
+  model: string
+  remarks: string
+  material: string
+  colour: string
+  itemType: string
+  additionalFeatures: string
+  description: string
+  specificPosition: string
+  unlistedName: string
 }
 
 export default function EntryPage() {
@@ -79,6 +97,19 @@ export default function EntryPage() {
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // --- "More details" + photo recognition ---------------------------------
+  const [showDetails, setShowDetails] = useState(false)
+  const [material, setMaterial] = useState('')
+  const [colour, setColour] = useState('')
+  const [itemType, setItemType] = useState('')
+  const [additionalFeatures, setAdditionalFeatures] = useState('')
+  const [description, setDescription] = useState('')
+  const [specificPosition, setSpecificPosition] = useState('')
+  const [aiAssisted, setAiAssisted] = useState(false)
+  const [identifying, setIdentifying] = useState(false)
+  const [aiSnapshot, setAiSnapshot] = useState<FormSnapshot | null>(null)
+  const aiFileRef = useRef<HTMLInputElement>(null)
+
   // Hydrate once the record is known; later live-query ticks must not stomp edits.
   useEffect(() => {
     if (!ctx || loaded) return
@@ -94,6 +125,17 @@ export default function EntryPage() {
       setCondition(e.condition)
       setRemarks(e.remarks)
       setTagDraft(e.tagNumbers)
+      setMaterial(e.material ?? '')
+      setColour(e.colour ?? '')
+      setItemType(e.itemType ?? '')
+      setAdditionalFeatures(e.additionalFeatures ?? '')
+      setDescription(e.description ?? '')
+      setSpecificPosition(e.specificPosition ?? '')
+      setAiAssisted(Boolean(e.aiAssisted))
+      // Open the details section automatically when the entry already has some.
+      if (e.material || e.colour || e.itemType || e.additionalFeatures || e.description || e.specificPosition) {
+        setShowDetails(true)
+      }
       if (e.conditionBreakdown && Object.keys(e.conditionBreakdown).length > 0) {
         setSplitCondition(true)
         setBreakdown(e.conditionBreakdown)
@@ -152,6 +194,9 @@ export default function EntryPage() {
     ? unlistedName || t('entry.addUnlisted')
     : assetName(lang, assetType?.name ?? '', assetType?.nameSw)
 
+  const detailsFilled = [material, colour, itemType, additionalFeatures, description, specificPosition].filter(
+    (v) => v.trim().length > 0,
+  ).length
   const breakdownSum = CONDITIONS.reduce((n, c) => n + (breakdown[c] ?? 0), 0)
   const breakdownOk = !splitCondition || breakdownIsValid(breakdown, quantity)
 
@@ -195,6 +240,110 @@ export default function EntryPage() {
     setRemovedPhotoIds((prev) => (photos.find((p) => p.id === id)?.persisted ? [...prev, id] : prev))
   }
 
+  function currentSnapshot(): FormSnapshot {
+    return {
+      quantity,
+      condition,
+      serials,
+      brand,
+      model,
+      remarks,
+      material,
+      colour,
+      itemType,
+      additionalFeatures,
+      description,
+      specificPosition,
+      unlistedName,
+    }
+  }
+
+  function restoreSnapshot(snap: FormSnapshot) {
+    setQuantity(snap.quantity)
+    setCondition(snap.condition)
+    setSerials(snap.serials)
+    setBrand(snap.brand)
+    setModel(snap.model)
+    setRemarks(snap.remarks)
+    setMaterial(snap.material)
+    setColour(snap.colour)
+    setItemType(snap.itemType)
+    setAdditionalFeatures(snap.additionalFeatures)
+    setDescription(snap.description)
+    setSpecificPosition(snap.specificPosition)
+    setUnlistedName(snap.unlistedName)
+  }
+
+  /**
+   * Capture & identify: attach the photo first (so the evidence is kept even if
+   * the call fails), then pre-fill the form from the model's reading of it.
+   * Nothing is saved here — the inspector still reviews and taps Save.
+   */
+  async function onIdentifyPhoto(files: FileList | null) {
+    const file = files?.[0]
+    if (!file || !ctx?.room) return
+
+    setIdentifying(true)
+    setError(null)
+    try {
+      const { blob, width, height } = await compressImage(file)
+      setPhotos((prev) => [...prev, { id: uid('ph_'), blob, width, height, persisted: false }])
+
+      const outcome = await identifyPhoto(blob, {
+        roomId: ctx.room.id,
+        expectedAssetName: isUnlisted ? undefined : ctx.assetType?.name,
+      })
+
+      if (!outcome.ok) {
+        const messages: Record<string, StringKey> = {
+          offline: 'ai.offline',
+          'not-connected': 'ai.notConnected',
+          'vision-not-configured': 'ai.notConfigured',
+        }
+        flash(t(messages[outcome.error] ?? 'ai.failed'))
+        return
+      }
+
+      const snapshot = currentSnapshot()
+      const r = outcome.result
+      let filled = 0
+      const fill = (value: string, setter: (v: string) => void) => {
+        if (!value) return
+        setter(value)
+        filled += 1
+      }
+
+      if (!notPresent && r.quantity > 0 && r.quantity !== quantity) {
+        setQuantity(r.quantity)
+        filled += 1
+      }
+      setCondition(r.condition)
+      filled += 1
+
+      fill(r.serialNumber, (v) => setSerials((prev) => [v, ...prev.slice(1)]))
+      fill(r.brand, setBrand)
+      fill(r.model, setModel)
+      fill(r.itemType, setItemType)
+      fill(r.material, setMaterial)
+      fill(r.colour, setColour)
+      fill(r.additionalFeatures, setAdditionalFeatures)
+      fill(r.description, setDescription)
+      fill(r.specificPosition, setSpecificPosition)
+      fill(r.remarks, setRemarks)
+      if (isUnlisted) fill(r.itemName, setUnlistedName)
+
+      setAiSnapshot(snapshot)
+      setAiAssisted(true)
+      setShowDetails(true)
+      flash(t('ai.filled', { n: filled }))
+    } catch {
+      flash(t('ai.failed'))
+    } finally {
+      setIdentifying(false)
+      if (aiFileRef.current) aiFileRef.current.value = ''
+    }
+  }
+
   function nextUnrecordedType(): string | null {
     const recorded = new Set(entries.filter((e) => !e.deleted && !e.isUnlistedItem).map((e) => e.assetTypeId))
     const current = isUnlisted ? null : assetTypeId
@@ -225,6 +374,13 @@ export default function EntryPage() {
         condition,
         conditionBreakdown: splitCondition && !notPresent ? breakdown : undefined,
         remarks,
+        material,
+        colour,
+        itemType,
+        additionalFeatures,
+        description,
+        specificPosition,
+        aiAssisted,
         inspectorId: inspector.id,
         notPresent,
         manualTagNumbers: notPresent ? [] : manualTags ? tagDraft : undefined,
@@ -284,6 +440,15 @@ export default function EntryPage() {
       setManualTags(false)
       setPhotos([])
       setRemovedPhotoIds([])
+      setMaterial('')
+      setColour('')
+      setItemType('')
+      setAdditionalFeatures('')
+      setDescription('')
+      setSpecificPosition('')
+      setAiAssisted(false)
+      setAiSnapshot(null)
+      setShowDetails(false)
     } else {
       navigate(`/room/${room.id}`)
     }
@@ -599,6 +764,103 @@ export default function EntryPage() {
               className="hidden"
               onChange={(e) => void onPickPhotos(e.target.files)}
             />
+
+            <Button
+              type="button"
+              variant="secondary"
+              full
+              disabled={identifying || busy}
+              onClick={() => aiFileRef.current?.click()}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z" strokeLinejoin="round" />
+                <path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8z" strokeLinejoin="round" />
+              </svg>
+              {identifying ? t('ai.identifying') : t('ai.capture')}
+            </Button>
+            <input
+              ref={aiFileRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => void onIdentifyPhoto(e.target.files)}
+            />
+
+            {aiAssisted && (
+              <div className="flex items-start gap-2 rounded-xl bg-amber-50 p-3">
+                <span aria-hidden="true" className="text-base leading-none">
+                  ⚠
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-amber-900">{t('ai.reviewBanner')}</p>
+                  {aiSnapshot && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        restoreSnapshot(aiSnapshot)
+                        setAiSnapshot(null)
+                        setAiAssisted(false)
+                      }}
+                      className="mt-1 text-xs font-bold text-amber-900 underline"
+                    >
+                      {t('ai.undo')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </Card>
+
+          <Card className="p-4">
+            <button
+              type="button"
+              onClick={() => setShowDetails((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 text-left"
+              aria-expanded={showDetails}
+            >
+              <span>
+                <span className="block text-sm font-bold text-slate-800">{t('entry.moreDetails')}</span>
+                <span className="block text-xs text-slate-500">
+                  {detailsFilled > 0 ? t('entry.detailsFilled', { n: detailsFilled }) : t('entry.moreDetailsHint')}
+                </span>
+              </span>
+              <svg
+                viewBox="0 0 24 24"
+                className={`h-5 w-5 shrink-0 text-slate-400 transition ${showDetails ? 'rotate-90' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+
+            {showDetails && (
+              <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
+                <Field label={t('entry.itemType')} hint={t('entry.itemTypeHint')}>
+                  <TextInput value={itemType} onChange={(e) => setItemType(e.target.value)} />
+                </Field>
+                <Field label={t('entry.material')} hint={t('entry.materialHint')}>
+                  <TextInput value={material} onChange={(e) => setMaterial(e.target.value)} />
+                </Field>
+                <Field label={t('entry.colour')} hint={t('entry.colourHint')}>
+                  <TextInput value={colour} onChange={(e) => setColour(e.target.value)} />
+                </Field>
+                <Field label={t('entry.additionalFeatures')} hint={t('entry.additionalFeaturesHint')}>
+                  <TextInput
+                    value={additionalFeatures}
+                    onChange={(e) => setAdditionalFeatures(e.target.value)}
+                  />
+                </Field>
+                <Field label={t('entry.specificPosition')} hint={t('entry.specificPositionHint')}>
+                  <TextInput value={specificPosition} onChange={(e) => setSpecificPosition(e.target.value)} />
+                </Field>
+                <Field label={t('entry.description')} hint={t('entry.descriptionHint')}>
+                  <TextArea value={description} onChange={(e) => setDescription(e.target.value)} />
+                </Field>
+              </div>
+            )}
           </Card>
         </>
       )}

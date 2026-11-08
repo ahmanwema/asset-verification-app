@@ -24,6 +24,13 @@ async function populate() {
     condition: 'G',
     conditionBreakdown: { G: 28, P: 2 },
     remarks: 'Two seats cracked',
+    material: 'Wooden seat and backrest with metal frame',
+    colour: 'Light Brown / Grey',
+    itemType: 'Single-seater student chair',
+    additionalFeatures: 'Pen groove on tabletop',
+    description: 'Single-seater student chair with wooden seat, wooden backrest and grey metal legs',
+    specificPosition: 'Front left corner',
+    aiAssisted: true,
     inspectorId: fx.inspector.id,
     notPresent: false,
   })
@@ -47,6 +54,8 @@ async function populate() {
     brand: '',
     condition: 'U',
     remarks: 'Broken leg',
+    specificPosition: 'Near window row 3',
+    description: 'Folding projector stand with a broken rear leg',
     inspectorId: fx.inspector2.id,
     notPresent: false,
   })
@@ -78,6 +87,52 @@ describe('fixed assets register', () => {
     // Only the first item carried a serial; the rest fall back to it, never blank.
     expect(chairRows[0]['Serial Number']).toBe('SN-A')
     expect(chairRows[5]['Serial Number']).toBe('SN-A')
+  })
+})
+
+describe('detail columns', () => {
+  it('carries the physical description through to the register', async () => {
+    await populate()
+    const { register } = await buildReportBundle(fx.exercise.id)
+    const chair = register.find((r) => r['Asset Description'] === 'Student Chair')!
+
+    expect(chair['Item Type']).toBe('Single-seater student chair')
+    expect(chair.Material).toBe('Wooden seat and backrest with metal frame')
+    expect(chair.Colour).toBe('Light Brown / Grey')
+    expect(chair['Additional Features']).toBe('Pen groove on tabletop')
+    expect(chair['Position in Room']).toBe('Front left corner')
+    expect(chair.Description).toContain('grey metal legs')
+    expect(chair['AI Assisted']).toBe('Yes')
+  })
+
+  it('leaves the columns blank rather than undefined when details were skipped', async () => {
+    await saveEntry({
+      exerciseId: fx.exercise.id,
+      room: fx.room2,
+      floor: fx.floor,
+      assetType: fx.table,
+      isUnlistedItem: false,
+      quantity: 1,
+      serialNumbers: [],
+      model: '',
+      brand: '',
+      condition: 'G',
+      remarks: '',
+      inspectorId: fx.inspector.id,
+      notPresent: false,
+    })
+    const { register } = await buildReportBundle(fx.exercise.id)
+    const row = register.find((r) => r['Asset Description'] === 'Student Table')!
+    expect(row.Material).toBe('')
+    expect(row['AI Assisted']).toBe('')
+  })
+
+  it('gives the condition report the position so a fixer can find the item', async () => {
+    await populate()
+    const { condition } = await buildReportBundle(fx.exercise.id)
+    const worst = condition[0]
+    expect(worst.Item).toBe('Projector Stand')
+    expect(worst['Position in Room']).toBe('Near window row 3')
   })
 })
 

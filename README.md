@@ -6,6 +6,10 @@ count and tag every item, take evidence photos, and sign each room off — with 
 network connection required. Data syncs to a server whenever signal returns, and
 the exercise exports to Excel and printable QR labels.
 
+Items can be described in as much or as little detail as the exercise needs, and
+a photo can be handed to a vision model that pre-fills the whole form for the
+inspector to check.
+
 Built for the Sufa Schools layout (5 floors, 51 rooms, 16 asset types), which loads
 as sample data on first run.
 
@@ -84,6 +88,64 @@ A row of 30 chairs can be recorded two ways:
   quantity. The register then emits 28 Good rows and 2 Poor rows, each with its
   own tag number, and the condition report picks up only the 2.
 
+### Detail fields
+
+The quick path stays short: quantity, serial, brand/model, condition, photo,
+remarks. Everything richer sits behind a collapsed **More details** section on
+the entry form, which opens by itself when an entry already has some:
+
+| Field | Example |
+|---|---|
+| Item type | `Top-Loading Water Dispenser` |
+| Material | `Wooden seat and backrest with metal frame` |
+| Colour | `Light Brown / Grey` |
+| Additional features | `Pen groove on tabletop`, `three water taps` |
+| Position in room | `Front left corner`, `Mounted on east wall` |
+| Description | `Single-seater student chair with wooden seat, wooden backrest and grey metal legs` |
+
+All six flow into the fixed assets register and the room summary; position and
+description also appear in the condition report, so whoever repairs an item can
+find it. Entries recorded before this was added keep working — a Dexie v2
+migration backfills them with empty strings.
+
+### Capture & identify (photo recognition)
+
+Next to the camera button on the entry form is **Capture & identify**. It takes a
+photo, attaches it as evidence, sends it to a vision model, and pre-fills every
+field it can read — quantity, condition, brand, model, serial, and all six detail
+fields. A standing banner tells the inspector to review each value, **Undo AI
+fill** restores exactly what was there before, and nothing is saved until they
+tap Save. Entries that were pre-filled this way are flagged `AI Assisted` in the
+register, so a reviewer can tell which rows started from a machine reading.
+
+Set it up by copying `.env.example` to `.env` and filling in:
+
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o        # or gpt-4o-mini to cut cost
+```
+
+Then restart the server. Without a key, everything else works exactly as before
+and the button explains that recognition is not set up. Each device can override
+the model in **Setup → Data → AI photo recognition**, which also shows whether
+the server has a key.
+
+**The key stays on the server.** The phone posts the photo to
+`/api/vision/identify` on the sync server, and that server calls OpenAI. An
+`OPENAI_API_KEY` given to the browser would be readable by anyone who opens the
+app, so the client never sees it. Two consequences worth knowing: recognition
+needs the device to be online *and* signed in to the sync server (**Sync →
+Connect**), and photos of the institution's property leave the building for
+OpenAI when it is used — the rest of the app never sends anything anywhere but
+your own server.
+
+The system prompt is one exported constant, `VISION_SYSTEM_PROMPT` in
+[`server/vision.js`](server/vision.js). Edit it there and every device picks up
+the change on its next request, with no app rebuild and nothing to redeploy to
+the phones. It pins the JSON contract, the Good/Fair/Poor/Unserviceable rubric,
+and one firm instruction: never invent a serial number, brand or model that is
+not legible — return `""` instead, because a wrong serial corrupts the register.
+
 ---
 
 ## Offline behaviour
@@ -122,9 +184,9 @@ sheet with the exercise metadata.
 
 | Report | Contents |
 |---|---|
-| Fixed assets register | One row per tagged item: tag, description, location, serial, brand/model, condition, inspector |
+| Fixed assets register | One row per tagged item: tag, description, location, serial, brand/model, condition, the six detail fields, inspector, AI-assisted flag |
 | Room-by-room summary | Everything found per room, plus a Room Totals sheet with sign-off state |
-| Condition report | Fair / Poor / Unserviceable only, Unserviceable first |
+| Condition report | Fair / Poor / Unserviceable only, Unserviceable first, with position and description |
 | Variance report | Expected but not found, unlisted items found, rooms never inspected |
 | Tag number register | Every issued tag in sequence, with a Printed column for the label run |
 
@@ -143,11 +205,13 @@ printing works offline.
 ```
 src/
   db/          Dexie schema (db.ts) and the Sufa Schools sample data (seed.ts)
-  lib/         tags · entries · queries · export-excel · labels · photos · sync
+  lib/         tags · entries · queries · export-excel · labels · photos · sync · vision
   pages/       Login · Inspect · Floor · Room · Entry · Dashboard · Reports · Labels · Setup · Sync
   components/  AppShell · ui primitives · charts
   i18n/        English + Swahili string tables
 server/        Dependency-free Node sync API (node:sqlite) that also serves dist/
+  index.js     HTTP, auth, sync protocol, photo store, static hosting
+  vision.js    Photo recognition: the system prompt and the OpenAI call
 ```
 
 | Layer | Choice | Why |
@@ -179,21 +243,24 @@ missing.
 ## Testing
 
 ```bash
-npm test          # 50 tests
+npm test          # 76 tests
 npm run typecheck
 ```
 
 | Suite | Covers |
 |---|---|
 | `src/lib/tags.test.ts` | Tag format, sequence allocation, tag stability when editing |
-| `src/lib/entries.test.ts` | Validation, not-present, sign-off, soft delete, rollups, conflict resolution |
+| `src/lib/entries.test.ts` | Validation, not-present, sign-off, soft delete, rollups, conflict resolution, detail fields |
 | `src/lib/export-excel.test.ts` | Row shape of all five reports against a populated exercise |
 | `src/lib/sync.test.ts` | Client↔server round trip against a live server: push, pull, conflicts, photo upload |
-| `server/sync.test.mjs` | The protocol itself: auth, conflict rules, soft deletes, photo endpoints |
-| `src/test/app.test.tsx` | Sign-in, floor→room→checklist navigation, tag preview, dashboard, language toggle |
+| `server/sync.test.mjs` | The protocol itself: auth, conflict rules, soft deletes, photo and vision endpoints |
+| `server/vision.test.mjs` | Photo recognition against a stub OpenAI: request shape, prompt, model override, junk-value repair, timeouts, missing key |
+| `src/test/app.test.tsx` | Sign-in, floor→room→checklist navigation, tag preview, dashboard, language toggle, More details, AI fill and undo |
 
 Tests run against a real in-memory IndexedDB (`fake-indexeddb`) and a real spawned
-server process — no mocked database, no mocked HTTP.
+server process — no mocked database, no mocked HTTP. The vision tests point the
+server at a local stub instead of OpenAI, so the suite needs no API key and
+spends nothing.
 
 ---
 
@@ -212,6 +279,10 @@ This is a field tool, and the auth is deliberately simple. Before production use
   keep it on a trusted site LAN.
 - Photos are stored on the server's local disk under `server/uploads/`. Swap
   `handleSync`'s photo endpoints for S3 if you need durable object storage.
+- **Photo recognition sends photographs to OpenAI.** The key is server-side and
+  never reaches the phone, but the images themselves leave your network when the
+  feature is used. Leave `OPENAI_API_KEY` unset if that is not acceptable for the
+  institution; nothing else in the app contacts a third party.
 
 ## Environment variables (server)
 
@@ -222,6 +293,10 @@ This is a field tool, and the auth is deliberately simple. Before production use
 | `UPLOAD_DIR` | `server/uploads` | Photo storage |
 | `ADMIN_EMAIL` | `admin@sufa.ac.tz` | Seeded server admin |
 | `ADMIN_PASSWORD` | `verify123` | Seeded server admin password — change this |
+| `OPENAI_API_KEY` | _(unset)_ | Enables photo recognition; without it the feature is off |
+| `OPENAI_MODEL` | `gpt-4o` | `gpt-4o` or `gpt-4o-mini` |
+| `OPENAI_BASE_URL` | OpenAI | Point at a proxy or compatible gateway |
+| `OPENAI_TIMEOUT_MS` | `45000` | How long to wait before telling the inspector it timed out |
 
 ## Not built yet
 
