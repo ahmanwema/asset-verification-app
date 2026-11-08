@@ -1,0 +1,146 @@
+/** Shared domain types. Every syncable record carries updatedAt + syncStatus. */
+
+export type SyncStatus = 'pending' | 'synced' | 'conflict'
+export type Condition = 'G' | 'F' | 'P' | 'U'
+export type Role = 'admin' | 'inspector'
+export type ExerciseStatus = 'draft' | 'active' | 'completed'
+export type Lang = 'en' | 'sw'
+
+export const CONDITIONS: Condition[] = ['G', 'F', 'P', 'U']
+
+export interface Organization {
+  id: string
+  name: string
+  address: string
+  logo?: string // data URL
+  updatedAt: number
+  syncStatus: SyncStatus
+}
+
+export interface Exercise {
+  id: string
+  orgId: string
+  name: string
+  date: string // ISO yyyy-mm-dd
+  status: ExerciseStatus
+  approvedBy: string
+  teamLeaderId: string
+  updatedAt: number
+  syncStatus: SyncStatus
+}
+
+export interface Floor {
+  id: string
+  exerciseId: string
+  name: string
+  code: string // used in tag numbers, e.g. GF, 1F
+  sortOrder: number
+  updatedAt: number
+  syncStatus: SyncStatus
+}
+
+export interface Room {
+  id: string
+  floorId: string
+  exerciseId: string
+  name: string
+  code: string // used in tag numbers, e.g. P3
+  sortOrder: number
+  updatedAt: number
+  syncStatus: SyncStatus
+}
+
+export interface AssetType {
+  id: string
+  orgId: string
+  name: string
+  nameSw?: string
+  code: string // e.g. SC
+  category: string
+  sortOrder: number
+  active: boolean
+  updatedAt: number
+  syncStatus: SyncStatus
+}
+
+export interface Inspector {
+  id: string
+  name: string
+  role: Role
+  email: string
+  phone?: string
+  active: boolean
+  /** SHA-256 of the password, for offline login. The server stores a scrypt hash. */
+  passwordHash?: string
+  updatedAt: number
+  syncStatus: SyncStatus
+}
+
+/** Counts per condition; used when quantity > 1 and items differ. */
+export type ConditionBreakdown = Partial<Record<Condition, number>>
+
+export interface InspectionEntry {
+  id: string
+  exerciseId: string
+  roomId: string
+  assetTypeId: string | null // null only for unlisted items
+  quantity: number
+  serialNumbers: string[]
+  model: string
+  brand: string
+  tagNumbers: string[]
+  condition: Condition
+  /** Set when the quantity splits across conditions, e.g. { G: 28, P: 2 }. */
+  conditionBreakdown?: ConditionBreakdown
+  photoIds: string[]
+  remarks: string
+  inspectorId: string
+  inspectedAt: number
+  isUnlistedItem: boolean
+  unlistedItemName?: string
+  /** True when the inspector tapped "Not present" (quantity 0). */
+  notPresent: boolean
+  updatedAt: number
+  deleted: boolean
+  syncStatus: SyncStatus
+  /** Server copy kept aside when a conflict is detected. */
+  conflictWith?: Omit<InspectionEntry, 'conflictWith'>
+}
+
+export interface RoomSignoff {
+  id: string
+  exerciseId: string
+  roomId: string
+  inspectorId: string
+  signedAt: number
+  totalItemsFound: number
+  notes: string
+  updatedAt: number
+  deleted: boolean
+  syncStatus: SyncStatus
+}
+
+export interface Photo {
+  id: string
+  entryId: string
+  exerciseId: string
+  /**
+   * Raw JPEG bytes rather than a Blob: older iOS Safari mishandles Blobs stored
+   * in IndexedDB, and bytes survive every structured-clone implementation.
+   */
+  data: ArrayBuffer
+  contentType: string
+  width: number
+  height: number
+  createdAt: number
+  remoteUrl?: string
+  syncStatus: SyncStatus
+}
+
+export interface Meta {
+  key: string
+  value: unknown
+}
+
+/** Room progress rollup used by the dashboard and room list. */
+export type RoomStatus = 'not_started' | 'in_progress' | 'done'
