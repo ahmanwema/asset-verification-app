@@ -15,7 +15,7 @@ import {
 import { allocateTagNumbers, deriveCode } from '../lib/tags'
 import { breakdownIsValid } from '../lib/queries'
 import { blobToArrayBuffer, compressImage, photoBlob } from '../lib/photos'
-import { identifyPhoto } from '../lib/vision'
+import { MAX_IDENTIFY_IMAGES, identifyPhoto } from '../lib/vision'
 import {
   Button,
   CONDITION_STYLE,
@@ -360,9 +360,9 @@ export default function EntryPage() {
    * a photo already attached — the inspector may have shot it before the
    * catalog existed, or on a laptop with no camera at all.
    */
-  async function runIdentify(blob: Blob) {
+  async function runIdentify(input: Blob | Blob[]) {
     if (!ctx?.room) return
-    const outcome = await identifyPhoto(blob, {
+    const outcome = await identifyPhoto(input, {
       roomId: ctx.room.id,
       expectedAssetName: isUnlisted ? undefined : ctx.assetType?.name,
     })
@@ -432,14 +432,14 @@ export default function EntryPage() {
     }
   }
 
-  /** Identify a photo that is already on the entry; nothing is attached again. */
-  async function identifyAttached(photoId: string) {
-    const photo = photos.find((p) => p.id === photoId)
-    if (!photo) return
+  /** Identify photos already on the entry; nothing is attached again. */
+  async function identifyAttached(photoIds: string[]) {
+    const blobs = photos.filter((p) => photoIds.includes(p.id)).map((p) => p.blob)
+    if (blobs.length === 0) return
     setIdentifying(true)
     setError(null)
     try {
-      await runIdentify(photo.blob)
+      await runIdentify(blobs)
     } catch {
       flash(t('ai.failed'))
     } finally {
@@ -861,7 +861,7 @@ export default function EntryPage() {
                   <button
                     type="button"
                     disabled={identifying || busy}
-                    onClick={() => void identifyAttached(p.id)}
+                    onClick={() => void identifyAttached([p.id])}
                     className="absolute inset-x-0 bottom-0 rounded-b-xl bg-slate-900/70 py-0.5 text-[10px] font-bold text-white disabled:opacity-50"
                   >
                     {t('ai.identifyThis')}
@@ -942,6 +942,20 @@ export default function EntryPage() {
             >
               {t('ai.uploadAndIdentify')}
             </Button>
+
+            {/* Front, back and the serial plate read together describe an item
+                far better than any one of them. */}
+            {photos.length > 1 && (
+              <Button
+                type="button"
+                variant="secondary"
+                full
+                disabled={identifying || busy}
+                onClick={() => void identifyAttached(photos.slice(0, MAX_IDENTIFY_IMAGES).map((p) => p.id))}
+              >
+                {t('ai.identifyAll', { n: Math.min(photos.length, MAX_IDENTIFY_IMAGES) })}
+              </Button>
+            )}
             <input
               ref={aiUploadRef}
               type="file"

@@ -85,8 +85,19 @@ async function buildContext(opts: { roomId: string; expectedAssetName?: string }
  * server — the phone only ever talks to the sync API, which is also why this
  * needs the device to be connected and signed in to that server.
  */
+/** More views than this are not sent: each costs tokens and waiting. */
+export const MAX_IDENTIFY_IMAGES = 4
+
+/**
+ * Reads one item from one or more photographs of it.
+ *
+ * Several views help where one cannot: the serial plate on the back, the
+ * brand mark underneath, the damage only visible from the side. The server
+ * tells the model they are the same item, so the count of photos never
+ * becomes the quantity.
+ */
 export async function identifyPhoto(
-  blob: Blob,
+  input: Blob | Blob[],
   opts: { roomId: string; expectedAssetName?: string },
 ): Promise<VisionOutcome> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' }
@@ -94,9 +105,12 @@ export async function identifyPhoto(
   const token = await getToken()
   if (!token) return { ok: false, error: 'not-connected' }
 
+  const blobs = (Array.isArray(input) ? input : [input]).slice(0, MAX_IDENTIFY_IMAGES)
+  if (blobs.length === 0) return { ok: false, error: 'failed' }
+
   try {
-    const [image, context, model] = await Promise.all([
-      blobToBase64(blob),
+    const [images, context, model] = await Promise.all([
+      Promise.all(blobs.map((b) => blobToBase64(b))),
       buildContext(opts),
       getVisionModel(),
     ])
@@ -105,8 +119,8 @@ export async function identifyPhoto(
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({
-        image,
-        contentType: blob.type || 'image/jpeg',
+        images,
+        contentType: blobs[0].type || 'image/jpeg',
         model: model ?? undefined,
         context,
       }),

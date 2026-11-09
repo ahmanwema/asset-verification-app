@@ -6,7 +6,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import http from 'node:http'
-import { VISION_SYSTEM_PROMPT, adaptRequest, defaultModel, handleVisionIdentify, normalizeVisionResult, parseJsonLoose, reasoningEffort } from './vision.js'
+import { MAX_IMAGES, VISION_SYSTEM_PROMPT, adaptRequest, buildUserContent, defaultModel, handleVisionIdentify, normalizeVisionResult, parseJsonLoose, reasoningEffort } from './vision.js'
 
 let stub
 let stubPort
@@ -291,5 +291,46 @@ describe('model compatibility', () => {
       if (saved === undefined) delete process.env.OPENAI_REASONING_EFFORT
       else process.env.OPENAI_REASONING_EFFORT = saved
     }
+  })
+})
+
+describe('several views of one item', () => {
+  it('sends every photo and says they are the same item', () => {
+    const content = buildUserContent({ roomName: 'P1', floorName: 'G floor' }, [
+      'data:image/jpeg;base64,AAA',
+      'data:image/jpeg;base64,BBB',
+      'data:image/jpeg;base64,CCC',
+    ])
+
+    const images = content.filter((c) => c.type === 'image_url')
+    expect(images.map((i) => i.image_url.url)).toEqual([
+      'data:image/jpeg;base64,AAA',
+      'data:image/jpeg;base64,BBB',
+      'data:image/jpeg;base64,CCC',
+    ])
+
+    // Without this the model reasonably reads three photos as three chairs.
+    const text = content.find((c) => c.type === 'text').text
+    expect(text).toContain('SAME single item')
+    expect(text).toContain('do not let their number affect the quantity')
+    expect(text).toContain('3 photographs')
+  })
+
+  it('says nothing about multiple views when there is only one', () => {
+    const content = buildUserContent({}, ['data:image/jpeg;base64,AAA'])
+    expect(content.filter((c) => c.type === 'image_url')).toHaveLength(1)
+    expect(content.find((c) => c.type === 'text').text).not.toContain('SAME single item')
+  })
+
+  it('still accepts a bare string, as an older client sends', () => {
+    const content = buildUserContent({}, 'data:image/jpeg;base64,AAA')
+    expect(content.filter((c) => c.type === 'image_url')).toHaveLength(1)
+  })
+
+  it('caps how many views go in one request', () => {
+    const many = Array.from({ length: 10 }, (_, i) => `data:image/jpeg;base64,${i}`)
+    expect(MAX_IMAGES).toBe(4)
+    // The cap is applied by the handler; the builder renders what it is given.
+    expect(buildUserContent({}, many.slice(0, MAX_IMAGES)).filter((c) => c.type === 'image_url')).toHaveLength(4)
   })
 })

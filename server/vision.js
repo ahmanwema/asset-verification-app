@@ -94,7 +94,10 @@ Condition rubric:
 
 Write all text values in English and in sentence case. Every field is a string except "quantity" and "confidence", which are numbers.`
 
-function buildUserContent(context, dataUrl) {
+/** At most this many views per request: each one costs tokens and latency. */
+export const MAX_IMAGES = 4
+
+export function buildUserContent(context, dataUrls) {
   const catalog = Array.isArray(context?.assetTypes) ? context.assetTypes : []
   const catalogText =
     catalog.length > 0
@@ -106,14 +109,26 @@ function buildUserContent(context, dataUrl) {
     ? `\nThe inspector took this photo while recording "${context.expectedAssetName}". Prefer that identification if the photograph is consistent with it.`
     : ''
 
+  const urls = Array.isArray(dataUrls) ? dataUrls : [dataUrls]
+
+  // Several photographs are views of ONE item - the front, the back, the
+  // serial plate. Saying so matters: without it a model reasonably reads
+  // three pictures as three chairs and returns a quantity of three.
+  const multi =
+    urls.length > 1
+      ? `\n\nThere are ${urls.length} photographs below. They are different views of the SAME single item - do not treat them as separate items, and do not let their number affect the quantity. Combine what they show: a detail legible in one of them (a serial plate, a brand mark, damage) is a detail of the item.`
+      : ''
+
   return [
     {
       type: 'text',
       text: `Asset type catalog for this exercise:\n${catalogText}\n\nLocation: ${
         where || 'unknown'
-      }.${expected}\n\nIdentify the item in the photograph and reply with the JSON object.`,
+      }.${expected}${multi}\n\nIdentify the item in the photograph${
+        urls.length > 1 ? 's' : ''
+      } and reply with the JSON object.`,
     },
-    { type: 'image_url', image_url: { url: dataUrl, detail: 'auto' } },
+    ...urls.map((url) => ({ type: 'image_url', image_url: { url, detail: 'auto' } })),
   ]
 }
 
@@ -209,12 +224,18 @@ export async function handleVisionIdentify(body) {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) return { status: 503, payload: { error: 'vision-not-configured' } }
 
-  const image = String(body?.image || '')
-  if (!image) return { status: 400, payload: { error: 'missing-image' } }
+  // `images` is the current shape; `image` is kept so an older client that
+  // has not picked up a new build still works.
+  const supplied = Array.isArray(body?.images) && body.images.length > 0 ? body.images : [body?.image]
+  const images = supplied
+    .map((i) => String(i || ''))
+    .filter(Boolean)
+    .slice(0, MAX_IMAGES)
+  if (images.length === 0) return { status: 400, payload: { error: 'missing-image' } }
 
   const model = VISION_MODELS.includes(body?.model) ? body.model : defaultModel()
   const contentType = String(body?.contentType || 'image/jpeg')
-  const dataUrl = `data:${contentType};base64,${image}`
+  const dataUrls = images.map((i) => `data:${contentType};base64,${i}`)
   const timeout = Number(process.env.OPENAI_TIMEOUT_MS || 45000)
 
   const request = {
@@ -224,7 +245,7 @@ export async function handleVisionIdentify(body) {
     response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: VISION_SYSTEM_PROMPT },
-      { role: 'user', content: buildUserContent(body?.context, dataUrl) },
+      { role: 'user', content: buildUserContent(body?.context, dataUrls) },
     ],
   }
   const effort = reasoningEffort()
@@ -281,5 +302,5 @@ export async function handleVisionIdentify(body) {
     return { status: 502, payload: { error: 'vision-bad-response' } }
   }
 
-  return { status: 200, payload: { model, result: normalizeVisionResult(parsed) } }
+  return { status: 200, payload: { model, images: images.length, result: normalizeVisionResult(parsed) } }
 }
