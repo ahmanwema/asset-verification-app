@@ -100,12 +100,14 @@ export default function EntryPage() {
   const ctx = useLiveQuery(async () => {
     const room = await db.rooms.get(roomId)
     if (!room) return null
-    const [floor, assetType, assetTypes, entries, inspectors] = await Promise.all([
+    const [floor, assetType, assetTypes, entries, inspectors, allRooms, allFloors] = await Promise.all([
       db.floors.get(room.floorId),
       isUnlisted ? Promise.resolve(undefined) : db.assetTypes.get(assetTypeId),
       db.assetTypes.orderBy('sortOrder').toArray(),
       db.entries.where('roomId').equals(roomId).toArray(),
       db.inspectors.toArray(),
+      db.rooms.where('exerciseId').equals(room.exerciseId).toArray(),
+      db.floors.where('exerciseId').equals(room.exerciseId).toArray(),
     ])
     const existing = isUnlisted
       ? editId
@@ -120,6 +122,8 @@ export default function EntryPage() {
       entries,
       existing,
       inspectors,
+      allRooms,
+      allFloors,
     }
   }, [roomId, assetTypeId, editId])
 
@@ -154,6 +158,7 @@ export default function EntryPage() {
   const [description, setDescription] = useState('')
   const [specificPosition, setSpecificPosition] = useState('')
   const [aiAssisted, setAiAssisted] = useState(false)
+  const [expectedRoomId, setExpectedRoomId] = useState('')
   const [identifying, setIdentifying] = useState(false)
   const [aiSnapshot, setAiSnapshot] = useState<FormSnapshot | null>(null)
   const aiFileRef = useRef<HTMLInputElement>(null)
@@ -184,8 +189,17 @@ export default function EntryPage() {
       setDescription(e.description ?? '')
       setSpecificPosition(e.specificPosition ?? '')
       setAiAssisted(Boolean(e.aiAssisted))
+      setExpectedRoomId(e.expectedRoomId ?? '')
       // Open the details section automatically when the entry already has some.
-      if (e.material || e.colour || e.itemType || e.additionalFeatures || e.description || e.specificPosition) {
+      if (
+        e.material ||
+        e.colour ||
+        e.itemType ||
+        e.additionalFeatures ||
+        e.description ||
+        e.specificPosition ||
+        e.expectedRoomId
+      ) {
         setShowDetails(true)
       }
       if (e.conditionBreakdown && Object.keys(e.conditionBreakdown).length > 0) {
@@ -241,7 +255,7 @@ export default function EntryPage() {
   if (ctx === undefined) return <p className="text-sm text-slate-500">{t('common.loading')}</p>
   if (ctx === null) return <EmptyState title={t('common.empty')} />
 
-  const { room, floor, assetType, assetTypes, entries, existing, inspectors } = ctx
+  const { room, floor, assetType, assetTypes, entries, existing, inspectors, allRooms, allFloors } = ctx
   const title = isUnlisted
     ? unlistedName || t('entry.addUnlisted')
     : assetName(lang, assetType?.name ?? '', assetType?.nameSw)
@@ -267,6 +281,7 @@ export default function EntryPage() {
 
   function valueLabel(field: string, value: string): string {
     if (!value) return '—'
+    if (field === 'expectedRoomId') return allRooms.find((r) => r.id === value)?.name ?? value
     if (field === 'condition' && (CONDITIONS as string[]).includes(value)) {
       return t(`condition.${value as Condition}`)
     }
@@ -492,6 +507,7 @@ export default function EntryPage() {
         description,
         specificPosition,
         aiAssisted,
+        expectedRoomId: expectedRoomId || undefined,
         inspectorId: inspector.id,
         notPresent,
         manualTagNumbers: notPresent ? [] : manualTags ? tagDraft : undefined,
@@ -590,6 +606,264 @@ export default function EntryPage() {
             <TextInput value={unlistedName} onChange={(e) => setUnlistedName(e.target.value)} autoFocus />
           </Field>
         </Card>
+      )}
+
+      {/* Photo first: it is what the inspector does on walking up to the item,
+          and photo recognition fills the rest of the form from it. */}
+      {!notPresent && (
+        <>
+          <Card className="space-y-3 p-4">
+            <span className="flex items-center gap-1.5">
+              <span className="field-label mb-0">{t('entry.photo')}</span>
+              {editedBadge('photos')}
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {previews.map((p) => (
+                <div key={p.id} className="relative">
+                  <img src={p.url} alt="" className="h-20 w-20 rounded-xl object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => removePhoto(p.id)}
+                    className="absolute -right-1.5 -top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white"
+                    aria-label={t('entry.removePhoto')}
+                  >
+                    ×
+                  </button>
+                  {/* Any attached photo can be read, not only one just taken:
+                      it may have been shot before the catalog existed, or
+                      uploaded from a laptop with no camera. */}
+                  <button
+                    type="button"
+                    disabled={identifying || busy}
+                    onClick={() => void identifyAttached([p.id])}
+                    className="absolute inset-x-0 bottom-0 rounded-b-xl bg-slate-900/70 py-0.5 text-[10px] font-bold text-white disabled:opacity-50"
+                  >
+                    {t('ai.identifyThis')}
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-slate-300 text-[10px] font-semibold text-slate-500"
+              >
+                <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 8l2-3h6l2 3h5a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V8z" strokeLinejoin="round" />
+                  <circle cx="11.5" cy="13" r="3.5" />
+                </svg>
+                {t('entry.takePhoto')}
+              </button>
+              <button
+                type="button"
+                onClick={() => uploadRef.current?.click()}
+                className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-slate-300 text-[10px] font-semibold text-slate-500"
+              >
+                <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 16V4m0 0L8 8m4-4l4 4" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3" strokeLinecap="round" />
+                </svg>
+                {t('entry.uploadPhoto')}
+              </button>
+            </div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              multiple
+              className="hidden"
+              onChange={(e) => void onPickPhotos(e.target.files)}
+            />
+            {/* No `capture`, so this opens the gallery or the file picker
+                rather than the camera — the only route on a desktop. */}
+            <input
+              ref={uploadRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => void onPickPhotos(e.target.files)}
+            />
+
+            <Button
+              type="button"
+              variant="secondary"
+              full
+              disabled={identifying || busy}
+              onClick={() => aiFileRef.current?.click()}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z" strokeLinejoin="round" />
+                <path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8z" strokeLinejoin="round" />
+              </svg>
+              {identifying ? t('ai.identifying') : t('ai.capture')}
+            </Button>
+            <input
+              ref={aiFileRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => void onIdentifyPhoto(e.target.files)}
+            />
+
+            <Button
+              type="button"
+              variant="secondary"
+              full
+              disabled={identifying || busy}
+              onClick={() => aiUploadRef.current?.click()}
+            >
+              {t('ai.uploadAndIdentify')}
+            </Button>
+
+            {/* Front, back and the serial plate read together describe an item
+                far better than any one of them. */}
+            {photos.length > 1 && (
+              <Button
+                type="button"
+                variant="secondary"
+                full
+                disabled={identifying || busy}
+                onClick={() => void identifyAttached(photos.slice(0, MAX_IDENTIFY_IMAGES).map((p) => p.id))}
+              >
+                {t('ai.identifyAll', { n: Math.min(photos.length, MAX_IDENTIFY_IMAGES) })}
+              </Button>
+            )}
+            <input
+              ref={aiUploadRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => void onIdentifyPhoto(e.target.files)}
+            />
+
+            {aiAssisted && (
+              <div className="flex items-start gap-2 rounded-xl bg-amber-50 p-3">
+                <span aria-hidden="true" className="text-base leading-none">
+                  ⚠
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-amber-900">{t('ai.reviewBanner')}</p>
+                  {aiSnapshot && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        restoreSnapshot(aiSnapshot)
+                        setAiSnapshot(null)
+                        setAiAssisted(false)
+                      }}
+                      className="mt-1 text-xs font-bold text-amber-900 underline"
+                    >
+                      {t('ai.undo')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </Card>
+
+          <Card className="p-4">
+            <button
+              type="button"
+              onClick={() => setShowDetails((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 text-left"
+              aria-expanded={showDetails}
+            >
+              <span>
+                <span className="block text-sm font-bold text-slate-800">{t('entry.moreDetails')}</span>
+                <span className="block text-xs text-slate-500">
+                  {detailsFilled > 0 ? t('entry.detailsFilled', { n: detailsFilled }) : t('entry.moreDetailsHint')}
+                </span>
+              </span>
+              <svg
+                viewBox="0 0 24 24"
+                className={`h-5 w-5 shrink-0 text-slate-400 transition ${showDetails ? 'rotate-90' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+
+            {showDetails && (
+              <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
+                <Field
+                  label={t('entry.itemType')}
+                  hint={t('entry.itemTypeHint')}
+                  edited={editedFields.has('itemType') ? t('history.edited') : undefined}
+                >
+                  <TextInput value={itemType} onChange={(e) => setItemType(e.target.value)} />
+                </Field>
+                <Field
+                  label={t('entry.material')}
+                  hint={t('entry.materialHint')}
+                  edited={editedFields.has('material') ? t('history.edited') : undefined}
+                >
+                  <TextInput value={material} onChange={(e) => setMaterial(e.target.value)} />
+                </Field>
+                <Field
+                  label={t('entry.colour')}
+                  hint={t('entry.colourHint')}
+                  edited={editedFields.has('colour') ? t('history.edited') : undefined}
+                >
+                  <TextInput value={colour} onChange={(e) => setColour(e.target.value)} />
+                </Field>
+                <Field
+                  label={t('entry.additionalFeatures')}
+                  hint={t('entry.additionalFeaturesHint')}
+                  edited={editedFields.has('additionalFeatures') ? t('history.edited') : undefined}
+                >
+                  <TextInput
+                    value={additionalFeatures}
+                    onChange={(e) => setAdditionalFeatures(e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label={t('entry.specificPosition')}
+                  hint={t('entry.specificPositionHint')}
+                  edited={editedFields.has('specificPosition') ? t('history.edited') : undefined}
+                >
+                  <TextInput value={specificPosition} onChange={(e) => setSpecificPosition(e.target.value)} />
+                </Field>
+                <Field
+                  label={t('entry.description')}
+                  hint={t('entry.descriptionHint')}
+                  edited={editedFields.has('description') ? t('history.edited') : undefined}
+                >
+                  <TextArea value={description} onChange={(e) => setDescription(e.target.value)} />
+                </Field>
+
+                {/* A physical verification records what is in front of you.
+                    This records that it is in the wrong place, so the variance
+                    report can list what has to be carried back. */}
+                <Field
+                  label={t('entry.expectedRoom')}
+                  hint={t('entry.expectedRoomHint')}
+                  edited={editedFields.has('expectedRoomId') ? t('history.edited') : undefined}
+                >
+                  <Select value={expectedRoomId} onChange={(e) => setExpectedRoomId(e.target.value)}>
+                    <option value="">{t('entry.expectedRoomSame')}</option>
+                    {allRooms
+                      .filter((r) => r.id !== room.id)
+                      .map((r) => ({ room: r, floor: allFloors.find((f) => f.id === r.floorId) }))
+                      .sort(
+                        (a, b) =>
+                          (a.floor?.sortOrder ?? 99) - (b.floor?.sortOrder ?? 99) ||
+                          a.room.sortOrder - b.room.sortOrder,
+                      )
+                      .map(({ room: r, floor: f }) => (
+                        <option key={r.id} value={r.id}>
+                          {f?.name ?? ''} · {r.name}
+                        </option>
+                      ))}
+                  </Select>
+                </Field>
+              </div>
+            )}
+          </Card>
+        </>
       )}
 
       <Card className="space-y-4 p-4">
@@ -845,234 +1119,9 @@ export default function EntryPage() {
               </div>
             )}
           </Card>
-
-          <Card className="space-y-3 p-4">
-            <span className="flex items-center gap-1.5">
-              <span className="field-label mb-0">{t('entry.photo')}</span>
-              {editedBadge('photos')}
-            </span>
-            <div className="flex flex-wrap gap-2">
-              {previews.map((p) => (
-                <div key={p.id} className="relative">
-                  <img src={p.url} alt="" className="h-20 w-20 rounded-xl object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => removePhoto(p.id)}
-                    className="absolute -right-1.5 -top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white"
-                    aria-label={t('entry.removePhoto')}
-                  >
-                    ×
-                  </button>
-                  {/* Any attached photo can be read, not only one just taken:
-                      it may have been shot before the catalog existed, or
-                      uploaded from a laptop with no camera. */}
-                  <button
-                    type="button"
-                    disabled={identifying || busy}
-                    onClick={() => void identifyAttached([p.id])}
-                    className="absolute inset-x-0 bottom-0 rounded-b-xl bg-slate-900/70 py-0.5 text-[10px] font-bold text-white disabled:opacity-50"
-                  >
-                    {t('ai.identifyThis')}
-                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-slate-300 text-[10px] font-semibold text-slate-500"
-              >
-                <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M3 8l2-3h6l2 3h5a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V8z" strokeLinejoin="round" />
-                  <circle cx="11.5" cy="13" r="3.5" />
-                </svg>
-                {t('entry.takePhoto')}
-              </button>
-              <button
-                type="button"
-                onClick={() => uploadRef.current?.click()}
-                className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-slate-300 text-[10px] font-semibold text-slate-500"
-              >
-                <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 16V4m0 0L8 8m4-4l4 4" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3" strokeLinecap="round" />
-                </svg>
-                {t('entry.uploadPhoto')}
-              </button>
-            </div>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              multiple
-              className="hidden"
-              onChange={(e) => void onPickPhotos(e.target.files)}
-            />
-            {/* No `capture`, so this opens the gallery or the file picker
-                rather than the camera — the only route on a desktop. */}
-            <input
-              ref={uploadRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={(e) => void onPickPhotos(e.target.files)}
-            />
-
-            <Button
-              type="button"
-              variant="secondary"
-              full
-              disabled={identifying || busy}
-              onClick={() => aiFileRef.current?.click()}
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z" strokeLinejoin="round" />
-                <path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8z" strokeLinejoin="round" />
-              </svg>
-              {identifying ? t('ai.identifying') : t('ai.capture')}
-            </Button>
-            <input
-              ref={aiFileRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={(e) => void onIdentifyPhoto(e.target.files)}
-            />
-
-            <Button
-              type="button"
-              variant="secondary"
-              full
-              disabled={identifying || busy}
-              onClick={() => aiUploadRef.current?.click()}
-            >
-              {t('ai.uploadAndIdentify')}
-            </Button>
-
-            {/* Front, back and the serial plate read together describe an item
-                far better than any one of them. */}
-            {photos.length > 1 && (
-              <Button
-                type="button"
-                variant="secondary"
-                full
-                disabled={identifying || busy}
-                onClick={() => void identifyAttached(photos.slice(0, MAX_IDENTIFY_IMAGES).map((p) => p.id))}
-              >
-                {t('ai.identifyAll', { n: Math.min(photos.length, MAX_IDENTIFY_IMAGES) })}
-              </Button>
-            )}
-            <input
-              ref={aiUploadRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => void onIdentifyPhoto(e.target.files)}
-            />
-
-            {aiAssisted && (
-              <div className="flex items-start gap-2 rounded-xl bg-amber-50 p-3">
-                <span aria-hidden="true" className="text-base leading-none">
-                  ⚠
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-amber-900">{t('ai.reviewBanner')}</p>
-                  {aiSnapshot && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        restoreSnapshot(aiSnapshot)
-                        setAiSnapshot(null)
-                        setAiAssisted(false)
-                      }}
-                      className="mt-1 text-xs font-bold text-amber-900 underline"
-                    >
-                      {t('ai.undo')}
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </Card>
-
-          <Card className="p-4">
-            <button
-              type="button"
-              onClick={() => setShowDetails((v) => !v)}
-              className="flex w-full items-center justify-between gap-2 text-left"
-              aria-expanded={showDetails}
-            >
-              <span>
-                <span className="block text-sm font-bold text-slate-800">{t('entry.moreDetails')}</span>
-                <span className="block text-xs text-slate-500">
-                  {detailsFilled > 0 ? t('entry.detailsFilled', { n: detailsFilled }) : t('entry.moreDetailsHint')}
-                </span>
-              </span>
-              <svg
-                viewBox="0 0 24 24"
-                className={`h-5 w-5 shrink-0 text-slate-400 transition ${showDetails ? 'rotate-90' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-
-            {showDetails && (
-              <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
-                <Field
-                  label={t('entry.itemType')}
-                  hint={t('entry.itemTypeHint')}
-                  edited={editedFields.has('itemType') ? t('history.edited') : undefined}
-                >
-                  <TextInput value={itemType} onChange={(e) => setItemType(e.target.value)} />
-                </Field>
-                <Field
-                  label={t('entry.material')}
-                  hint={t('entry.materialHint')}
-                  edited={editedFields.has('material') ? t('history.edited') : undefined}
-                >
-                  <TextInput value={material} onChange={(e) => setMaterial(e.target.value)} />
-                </Field>
-                <Field
-                  label={t('entry.colour')}
-                  hint={t('entry.colourHint')}
-                  edited={editedFields.has('colour') ? t('history.edited') : undefined}
-                >
-                  <TextInput value={colour} onChange={(e) => setColour(e.target.value)} />
-                </Field>
-                <Field
-                  label={t('entry.additionalFeatures')}
-                  hint={t('entry.additionalFeaturesHint')}
-                  edited={editedFields.has('additionalFeatures') ? t('history.edited') : undefined}
-                >
-                  <TextInput
-                    value={additionalFeatures}
-                    onChange={(e) => setAdditionalFeatures(e.target.value)}
-                  />
-                </Field>
-                <Field
-                  label={t('entry.specificPosition')}
-                  hint={t('entry.specificPositionHint')}
-                  edited={editedFields.has('specificPosition') ? t('history.edited') : undefined}
-                >
-                  <TextInput value={specificPosition} onChange={(e) => setSpecificPosition(e.target.value)} />
-                </Field>
-                <Field
-                  label={t('entry.description')}
-                  hint={t('entry.descriptionHint')}
-                  edited={editedFields.has('description') ? t('history.edited') : undefined}
-                >
-                  <TextArea value={description} onChange={(e) => setDescription(e.target.value)} />
-                </Field>
-              </div>
-            )}
-          </Card>
         </>
       )}
+
 
       {isUnlisted && existing && assetTypes.length > 0 && (
         <Card className="space-y-2 p-4">

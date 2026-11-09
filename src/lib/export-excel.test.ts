@@ -341,3 +341,57 @@ describe('label data', () => {
     expect(chairTags).toHaveLength(30)
   })
 })
+
+describe('an item found in the wrong room', () => {
+  it('is listed as a variance with where it belongs', async () => {
+    await saveEntry({
+      exerciseId: fx.exercise.id,
+      room: fx.room2, // found in P4
+      floor: fx.floor,
+      assetType: fx.chair,
+      isUnlistedItem: false,
+      quantity: 2,
+      serialNumbers: [],
+      model: '',
+      brand: '',
+      condition: 'G',
+      remarks: 'Carried through for an exam',
+      expectedRoomId: fx.room.id, // belongs in P3
+      inspectorId: fx.inspector.id,
+      notPresent: false,
+    })
+
+    const { variance, rooms } = await buildReportBundle(fx.exercise.id)
+    const row = variance.find((r) => r.Type === 'Found in the wrong room')!
+    expect(row).toBeTruthy()
+    expect(row.Item).toBe('Student Chair')
+    expect(row.Room).toBe('P4') // where it is
+    expect(row['Belongs In']).toContain('P3') // where it should be
+    expect(row.Quantity).toBe(2)
+
+    expect(rooms.find((r) => r.Item === 'Student Chair')?.['Belongs In']).toBe('P3')
+  })
+
+  it('says nothing when the item is where it belongs', async () => {
+    await saveEntry({
+      exerciseId: fx.exercise.id,
+      room: fx.room,
+      floor: fx.floor,
+      assetType: fx.chair,
+      isUnlistedItem: false,
+      quantity: 1,
+      serialNumbers: [],
+      model: '',
+      brand: '',
+      condition: 'G',
+      remarks: '',
+      // Naming the room it is already in must not read as a misplacement.
+      expectedRoomId: fx.room.id,
+      inspectorId: fx.inspector.id,
+      notPresent: false,
+    })
+
+    const { variance } = await buildReportBundle(fx.exercise.id)
+    expect(variance.filter((r) => r.Type === 'Found in the wrong room')).toEqual([])
+  })
+})

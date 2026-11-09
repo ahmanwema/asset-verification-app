@@ -179,6 +179,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         'Position in Room': e.specificPosition ?? '',
         Photos: e.photoIds.length,
         'AI Assisted': e.aiAssisted ? 'Yes' : '',
+        'Belongs In': e.expectedRoomId ? (roomById.get(e.expectedRoomId)?.name ?? '') : '',
         Edits: (e.editHistory ?? []).length,
         Remarks: e.remarks,
         Inspector: whoById.get(e.inspectorId)?.name ?? '',
@@ -249,6 +250,23 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         Floor: loc.floorName,
         Room: loc.roomName,
         Quantity: 0,
+        'Belongs In': '',
+        Remarks: e.remarks,
+        Inspector: whoById.get(e.inspectorId)?.name ?? '',
+        'Recorded At': fmtDate(e.inspectedAt),
+      })
+    } else if (e.expectedRoomId && e.expectedRoomId !== e.roomId) {
+      // Found somewhere it does not belong: an actionable row, because
+      // someone has to carry it back.
+      const home = roomById.get(e.expectedRoomId)
+      const homeFloor = home ? floorById.get(home.floorId) : undefined
+      variance.push({
+        Type: 'Found in the wrong room',
+        Item: nameOf(e),
+        Floor: loc.floorName,
+        Room: loc.roomName,
+        Quantity: e.quantity,
+        'Belongs In': home ? `${homeFloor?.name ?? ''} / ${home.name}` : e.expectedRoomId,
         Remarks: e.remarks,
         Inspector: whoById.get(e.inspectorId)?.name ?? '',
         'Recorded At': fmtDate(e.inspectedAt),
@@ -260,6 +278,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         Floor: loc.floorName,
         Room: loc.roomName,
         Quantity: e.quantity,
+        'Belongs In': '',
         Remarks: e.remarks,
         Inspector: whoById.get(e.inspectorId)?.name ?? '',
         'Recorded At': fmtDate(e.inspectedAt),
@@ -277,6 +296,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         Floor: loc.floorName,
         Room: room.name,
         Quantity: 0,
+        'Belongs In': '',
         Remarks: '',
         Inspector: '',
         'Recorded At': '',

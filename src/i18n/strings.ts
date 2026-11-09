@@ -105,6 +105,9 @@ export const en = {
   'entry.descriptionHint': 'One sentence describing the item physically',
   'entry.specificPosition': 'Position in room',
   'entry.specificPositionHint': 'e.g. Front left corner, mounted on east wall',
+  'entry.expectedRoom': 'Belongs to room',
+  'entry.expectedRoomHint': 'Set this only when the item was found somewhere it does not belong',
+  'entry.expectedRoomSame': 'This room — it belongs here',
   'entry.detailsFilled': '{n} filled',
 
   'setup.startFresh': 'Start fresh — delete the sample data',
@@ -422,6 +425,9 @@ export const sw: Record<StringKey, string> = {
   'entry.descriptionHint': 'Sentensi moja inayoeleza muonekano wa kifaa',
   'entry.specificPosition': 'Mahali ndani ya chumba',
   'entry.specificPositionHint': 'mfano: Kona ya mbele kushoto, ukutani upande wa mashariki',
+  'entry.expectedRoom': 'Kinastahili kuwa chumba',
+  'entry.expectedRoomHint': 'Weka hii pale tu kifaa kimekutwa mahali kisipostahili',
+  'entry.expectedRoomSame': 'Chumba hiki — kinastahili kuwa hapa',
   'entry.detailsFilled': '{n} yamejazwa',
 
   'setup.startFresh': 'Anza upya — futa data ya majaribio',

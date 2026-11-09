@@ -127,6 +127,12 @@ export interface InspectionEntry {
   specificPosition: string
   /** Set when the fields were pre-filled by photo recognition and not yet edited. */
   aiAssisted?: boolean
+  /**
+   * Where the item belongs, when that is not the room it was found in.
+   * A physical verification records what is there; this records that it is
+   * there by mistake, so it can be put back.
+   */
+  expectedRoomId?: string
 
   /**
    * Field-level change log, oldest first. Entries created before schema v3 are

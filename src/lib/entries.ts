@@ -35,6 +35,8 @@ export interface EntryDraft {
   description?: string
   specificPosition?: string
   aiAssisted?: boolean
+  /** Room the item belongs to, when it was found somewhere else. */
+  expectedRoomId?: string
   inspectorId: string
   notPresent: boolean
   /** Manual tag numbers override auto-generation when provided. */
@@ -78,6 +80,7 @@ const TRACKED_FIELDS: Array<{ field: string; label: string; render: (e: Inspecti
   { field: 'remarks', label: 'Remarks', render: (e) => e.remarks },
   { field: 'unlistedItemName', label: 'Item name', render: (e) => e.unlistedItemName ?? '' },
   { field: 'photos', label: 'Photos', render: (e) => String(e.photoIds.length) },
+  { field: 'expectedRoomId', label: 'Belongs to room', render: (e) => e.expectedRoomId ?? '' },
 ]
 
 /** English labels for the report sheet, keyed by field. */
@@ -167,6 +170,10 @@ export async function saveEntry(draft: EntryDraft): Promise<InspectionEntry> {
     description: (draft.description ?? '').trim(),
     specificPosition: (draft.specificPosition ?? '').trim(),
     aiAssisted: draft.aiAssisted ?? existing?.aiAssisted,
+    // Stored only when it differs: "belongs here" is the normal case and
+    // should not read as a misplacement in the variance report.
+    expectedRoomId:
+      draft.expectedRoomId && draft.expectedRoomId !== draft.room.id ? draft.expectedRoomId : undefined,
     inspectorId: draft.inspectorId,
     inspectedAt: existing?.inspectedAt ?? Date.now(),
     isUnlistedItem: draft.isUnlistedItem,
