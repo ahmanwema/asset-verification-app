@@ -10,7 +10,7 @@ import path from 'node:path'
 import { db, getMeta } from '../db/db'
 import { resetDb, seedFixture, type Fixture } from '../test/fixtures'
 import { resolveConflict, saveEntry } from './entries'
-import { loadSyncState, login, pendingRoomCount, setServerUrl, syncNow } from './sync'
+import { ensureEntryPhotos, loadSyncState, login, pendingRoomCount, setServerUrl, syncNow } from './sync'
 
 const PORT = 4791
 const BASE = `http://127.0.0.1:${PORT}/api`
@@ -269,5 +269,46 @@ describe('pull', () => {
     const pulled = await db.entries.get(foreignId)
     expect(pulled?.quantity).toBe(7)
     expect(pulled?.syncStatus).toBe('synced')
+  })
+})
+
+describe('photo download', () => {
+  it('fetches a photo this device never had, and keeps it', async () => {
+    await login('admin@test.local', 'secret123')
+
+    // One device records an item with a photo and uploads it.
+    const entry = await saveEntry(draft())
+    const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x11, 0x22, 0x33])
+    await db.photos.add({
+      id: 'ph_1',
+      entryId: entry.id,
+      exerciseId: fx.exercise.id,
+      data: bytes.buffer,
+      contentType: 'image/jpeg',
+      width: 1280,
+      height: 960,
+      createdAt: Date.now(),
+      syncStatus: 'pending',
+    })
+    await db.entries.put({ ...entry, photoIds: ['ph_1'], syncStatus: 'pending' })
+    await syncNow()
+
+    // A second device has the entry but none of the bytes.
+    await db.photos.clear()
+    expect(await db.photos.count()).toBe(0)
+
+    expect(await ensureEntryPhotos(entry.id)).toBe(1)
+    const [got] = await db.photos.toArray()
+    expect(new Uint8Array(got.data)).toEqual(bytes)
+    expect(got.syncStatus).toBe('synced') // must not be queued for re-upload
+
+    // Already held: no second request.
+    expect(await ensureEntryPhotos(entry.id)).toBe(0)
+  })
+
+  it('does nothing for an entry with no photos', async () => {
+    await login('admin@test.local', 'secret123')
+    const entry = await saveEntry(draft())
+    expect(await ensureEntryPhotos(entry.id)).toBe(0)
   })
 })

@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
 import { collectLabels, printLabels, qrDataUrl, type LabelData, type LabelScope } from '../lib/labels'
 import { photoBlob } from '../lib/photos'
+import { ensureEntryPhotos } from '../lib/sync'
 import { useSession } from '../state/session'
 import { useT } from '../i18n'
 import { Button, CONDITION_STYLE, Card, EmptyState, Field, SectionTitle, Select, Sheet, Toast } from '../components/ui'
@@ -178,6 +179,13 @@ export default function LabelsPage() {
  */
 function LabelPhotoSheet({ label, onClose }: { label: LabelData | null; onClose: () => void }) {
   const t = useT()
+  // Pull the bytes down if this device never had them — the phone that took
+  // the photo may not be the one sticking the labels.
+  useEffect(() => {
+    if (!label) return
+    void ensureEntryPhotos(label.entryId)
+  }, [label?.entryId])
+
   const photos = useLiveQuery(
     async () => (label ? db.photos.where('entryId').equals(label.entryId).toArray() : []),
     [label?.entryId],

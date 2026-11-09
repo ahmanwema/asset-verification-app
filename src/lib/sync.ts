@@ -375,3 +375,58 @@ export async function createTeamAccount(input: NewAccount): Promise<{ ok: true; 
     return { ok: false, error: 'offline' }
   }
 }
+
+/**
+ * Fetches any of an entry's photos that this device does not hold.
+ *
+ * Photos only ever travelled upward: a second phone pulls the entry, sees its
+ * photoIds, and has no bytes to show for them. Uploading is still one-way per
+ * sync — images are large and a field connection is not — so they are pulled
+ * on demand, when something actually wants to display one, and kept once
+ * fetched so it works offline afterwards.
+ *
+ * Returns the number newly stored. Failures are silent by design: a missing
+ * photo is a blank space, never a blocked screen.
+ */
+export async function ensureEntryPhotos(entryId: string): Promise<number> {
+  const entry = await db.entries.get(entryId)
+  if (!entry || entry.photoIds.length === 0) return 0
+
+  const held = new Set((await db.photos.where('entryId').equals(entryId).toArray()).map((p) => p.id))
+  const missing = entry.photoIds.filter((id) => !held.has(id))
+  if (missing.length === 0) return 0
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return 0
+  const token = await getToken()
+  if (!token) return 0
+  const base = await getServerUrl()
+
+  let fetched = 0
+  for (const id of missing) {
+    try {
+      const res = await fetch(`${base}/photos/${encodeURIComponent(id)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) continue
+      const data = await res.arrayBuffer()
+      if (data.byteLength === 0) continue
+      await db.photos.put({
+        id,
+        entryId,
+        exerciseId: entry.exerciseId,
+        data,
+        contentType: res.headers.get('Content-Type') || 'image/jpeg',
+        width: 0,
+        height: 0,
+        createdAt: Date.now(),
+        remoteUrl: `${base}/photos/${id}`,
+        // It came from the server; it must not be queued for upload again.
+        syncStatus: 'synced',
+      })
+      fetched += 1
+    } catch {
+      // Leave it missing; the next time something asks, it tries again.
+    }
+  }
+  return fetched
+}
