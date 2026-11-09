@@ -2,11 +2,20 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+const BUILD_ID = new Date().toISOString().slice(0, 16).replace('T', ' ')
+
 export default defineConfig({
+  // Shown in Setup → Data, so a device can say which build it is running.
+  // Three separate bugs were chased while a phone silently sat on an old one.
+  define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Registered by hand in main.tsx so it can poll for new builds; the
+      // injected script only checks on navigation, which an installed PWA
+      // may not do for days.
+      injectRegister: null,
       includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'Asset Verification & Tagging',

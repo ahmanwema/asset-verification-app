@@ -818,6 +818,10 @@ function DataTab() {
           <span className="text-slate-600">{t('setup.countSignoffs')}</span>
           <span className="font-bold tabular-nums">{counts?.signoffs ?? 0}</span>
         </p>
+        <p className="flex justify-between border-t border-slate-100 pt-1">
+          <span className="text-slate-600">{t('setup.build')}</span>
+          <span className="font-mono text-xs font-bold">{__BUILD_ID__}</span>
+        </p>
         {storage && (
           <p className="flex justify-between border-t border-slate-100 pt-1">
             <span className="text-slate-600">{t('setup.storage')}</span>

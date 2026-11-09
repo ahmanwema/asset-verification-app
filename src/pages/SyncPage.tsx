@@ -127,7 +127,21 @@ export default function SyncPage() {
             {t('sync.lastFailed')}: {lastError}
           </p>
         )}
-        {!connected && <p className="text-xs text-amber-700">{t('sync.serverUrl')} — {t('login.title')}</p>}
+        {/* Losing the token cuts a device off silently: the automatic sync
+            gives up before it starts and the button above is disabled, while
+            work piles up locally. Say so plainly, and say what to do. */}
+        {!connected && (
+          <div className="rounded-xl bg-amber-50 p-3">
+            <p className="text-sm font-bold text-amber-900">{t('sync.notConnected')}</p>
+            <p className="mt-0.5 text-xs text-amber-800">
+              {(state?.pendingRecords ?? 0) + (state?.pendingPhotos ?? 0) > 0
+                ? t('sync.notConnectedPending', {
+                    n: (state?.pendingRecords ?? 0) + (state?.pendingPhotos ?? 0),
+                  })
+                : t('sync.notConnectedHint')}
+            </p>
+          </div>
+        )}
         {!online && <p className="text-xs text-slate-500">{t('sync.offlineHint')}</p>}
       </Card>
 
