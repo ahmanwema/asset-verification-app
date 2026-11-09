@@ -4,7 +4,14 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db, uid } from '../db/db'
 import { assetName, useI18n, useT } from '../i18n'
 import { useSession } from '../state/session'
-import { EDIT_FIELD_LABEL, ValidationError, deleteEntry, saveEntry } from '../lib/entries'
+import {
+  ConversionError,
+  EDIT_FIELD_LABEL,
+  ValidationError,
+  convertToAssetType,
+  deleteEntry,
+  saveEntry,
+} from '../lib/entries'
 import { allocateTagNumbers, deriveCode } from '../lib/tags'
 import { breakdownIsValid } from '../lib/queries'
 import { blobToArrayBuffer, compressImage, photoBlob } from '../lib/photos'
@@ -17,6 +24,7 @@ import {
   EmptyState,
   Field,
   Segmented,
+  Select,
   TextArea,
   TextInput,
   Toast,
@@ -150,6 +158,7 @@ export default function EntryPage() {
   const [aiSnapshot, setAiSnapshot] = useState<FormSnapshot | null>(null)
   const aiFileRef = useRef<HTMLInputElement>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [moveTo, setMoveTo] = useState('')
 
   // Hydrate once the record is known; later live-query ticks must not stomp edits.
   useEffect(() => {
@@ -516,6 +525,22 @@ export default function EntryPage() {
       setShowDetails(false)
     } else {
       navigate(`/room/${room.id}`)
+    }
+  }
+
+  async function moveToType() {
+    if (!existing || !moveTo || !inspector) return
+    const target = assetTypes.find((a) => a.id === moveTo)
+    if (!target) return
+    setBusy(true)
+    setError(null)
+    try {
+      await convertToAssetType(existing.id, target, inspector.id)
+      navigate(`/room/${room.id}/item/${target.id}`)
+    } catch (err) {
+      setError(err instanceof ConversionError ? (err.message as StringKey) : 'convert.failed')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -968,6 +993,27 @@ export default function EntryPage() {
             )}
           </Card>
         </>
+      )}
+
+      {isUnlisted && existing && assetTypes.length > 0 && (
+        <Card className="space-y-2 p-4">
+          <span className="field-label mb-0">{t('convert.title')}</span>
+          <p className="text-xs text-slate-500">{t('convert.hint')}</p>
+          <div className="flex gap-2">
+            <Select value={moveTo} onChange={(e) => setMoveTo(e.target.value)} className="flex-1">
+              <option value="">{t('convert.choose')}</option>
+              {assetTypes.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.code} · {assetName(lang, a.name, a.nameSw)}
+                </option>
+              ))}
+            </Select>
+            <Button type="button" variant="secondary" disabled={!moveTo || busy} onClick={() => void moveToType()}>
+              {t('convert.move')}
+            </Button>
+          </div>
+          {tagDraft.length > 0 && <p className="text-xs text-amber-700">{t('convert.tagsKept')}</p>}
+        </Card>
       )}
 
       <Card className="p-4">

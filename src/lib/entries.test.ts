@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { db } from '../db/db'
 import { resetDb, seedFixture, type Fixture } from '../test/fixtures'
 import {
+  ConversionError,
   EDIT_HISTORY_LIMIT,
   ValidationError,
+  convertToAssetType,
   deleteEntry,
   markNotPresent,
   reopenRoom,
@@ -340,5 +342,88 @@ describe('conflict resolution', () => {
     expect(row?.quantity).toBe(12)
     expect(row?.inspectorId).toBe(fx.inspector2.id)
     expect(row?.syncStatus).toBe('synced')
+  })
+})
+
+describe('converting an unlisted item', () => {
+  it('moves it into the catalog, keeping the work and the tags', async () => {
+    const entry = await saveEntry(
+      draft({
+        isUnlistedItem: true,
+        assetType: undefined,
+        unlistedItemName: 'Table',
+        quantity: 5,
+        remarks: 'Back row',
+      }),
+    )
+    const tagsBefore = entry.tagNumbers
+    expect(tagsBefore[0]).toBe('TAB-1F-P3-001')
+
+    const moved = await convertToAssetType(entry.id, fx.table, fx.inspector2.id)
+
+    expect(moved.isUnlistedItem).toBe(false)
+    expect(moved.assetTypeId).toBe(fx.table.id)
+    expect(moved.unlistedItemName).toBeUndefined()
+    expect(moved.quantity).toBe(5)
+    expect(moved.remarks).toBe('Back row')
+    // Labels may already be stuck on the furniture.
+    expect(moved.tagNumbers).toEqual(tagsBefore)
+    expect(moved.syncStatus).toBe('pending')
+  })
+
+  it('records what it used to be in the edit log', async () => {
+    const entry = await saveEntry(
+      draft({ isUnlistedItem: true, assetType: undefined, unlistedItemName: 'Table' }),
+    )
+    const moved = await convertToAssetType(entry.id, fx.table, fx.inspector2.id)
+
+    const record = moved.editHistory.at(-1)!
+    expect(record).toMatchObject({
+      field: 'assetType',
+      oldValue: 'Unlisted: Table',
+      newValue: 'Student Table',
+      editedBy: fx.inspector2.id,
+    })
+  })
+
+  it('stops short of creating a second entry for one type in one room', async () => {
+    await saveEntry(draft({ assetType: fx.table, quantity: 2 }))
+    const unlisted = await saveEntry(
+      draft({ isUnlistedItem: true, assetType: undefined, unlistedItemName: 'Table' }),
+    )
+
+    await expect(convertToAssetType(unlisted.id, fx.table, fx.inspector.id)).rejects.toBeInstanceOf(
+      ConversionError,
+    )
+    // Nothing was changed by the attempt.
+    const row = await db.entries.get(unlisted.id)
+    expect(row?.isUnlistedItem).toBe(true)
+  })
+
+  it('allows the move when the clashing entry was deleted', async () => {
+    const first = await saveEntry(draft({ assetType: fx.table, quantity: 2 }))
+    await deleteEntry(first.id)
+    const unlisted = await saveEntry(
+      draft({ isUnlistedItem: true, assetType: undefined, unlistedItemName: 'Table' }),
+    )
+    const moved = await convertToAssetType(unlisted.id, fx.table, fx.inspector.id)
+    expect(moved.assetTypeId).toBe(fx.table.id)
+  })
+
+  it('refuses an item that is already a catalog type', async () => {
+    const entry = await saveEntry(draft({ assetType: fx.chair }))
+    await expect(convertToAssetType(entry.id, fx.table, fx.inspector.id)).rejects.toBeInstanceOf(
+      ConversionError,
+    )
+  })
+
+  it('makes the item stop counting as an unexpected find', async () => {
+    const entry = await saveEntry(
+      draft({ isUnlistedItem: true, assetType: undefined, unlistedItemName: 'Table', quantity: 5 }),
+    )
+    expect((await loadExerciseStats(fx.exercise.id)).unlistedItems).toBe(1)
+
+    await convertToAssetType(entry.id, fx.table, fx.inspector.id)
+    expect((await loadExerciseStats(fx.exercise.id)).unlistedItems).toBe(0)
   })
 })

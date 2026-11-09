@@ -148,6 +148,15 @@ export const en = {
   'team.errPassword': 'The password must be at least 8 characters',
   'team.errAdminOnly': 'Only an administrator can add accounts',
 
+  'convert.title': 'Move to an asset type',
+  'convert.hint': 'Recorded as unlisted. Move it into the catalog so it counts as an expected item instead of an unexpected find.',
+  'convert.choose': 'Choose an asset type…',
+  'convert.move': 'Move',
+  'convert.tagsKept': 'Tag numbers stay as they are — labels may already be printed and stuck on.',
+  'convert.alreadyListed': 'This item is already a catalog asset type',
+  'convert.alreadyInRoom': 'That asset type is already recorded in this room — edit that entry instead',
+  'convert.failed': 'Could not move the item',
+
   'history.title': 'Edit history',
   'history.count': '{n} changes recorded',
   'history.edited': 'edited',
@@ -432,6 +441,15 @@ export const sw: Record<StringKey, string> = {
   'team.errEmailTaken': 'Barua pepe hiyo tayari imesajiliwa',
   'team.errPassword': 'Password lazima iwe na angalau herufi 8',
   'team.errAdminOnly': 'Msimamizi pekee ndiye anayeweza kuongeza akaunti',
+
+  'convert.title': 'Hamishia kwenye aina ya mali',
+  'convert.hint': 'Imerekodiwa kama isiyo orodhani. Ihamishie kwenye katalogi ili ihesabiwe kama kitu kinachotarajiwa badala ya kilichoongezeka.',
+  'convert.choose': 'Chagua aina ya mali…',
+  'convert.move': 'Hamisha',
+  'convert.tagsKept': 'Namba za lebo hazibadiliki — huenda lebo zimeshachapishwa na kubandikwa.',
+  'convert.alreadyListed': 'Kifaa hiki tayari ni aina ya mali ya katalogi',
+  'convert.alreadyInRoom': 'Aina hiyo ya mali tayari imerekodiwa kwenye chumba hiki — hariri ile rekodi badala yake',
+  'convert.failed': 'Imeshindwa kuhamisha kifaa',
 
   'history.title': 'Historia ya mabadiliko',
   'history.count': 'Mabadiliko {n} yamerekodiwa',

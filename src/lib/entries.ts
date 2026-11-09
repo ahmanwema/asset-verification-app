@@ -303,3 +303,55 @@ export async function resolveConflict(entryId: string, keep: 'mine' | 'theirs'):
   }
   await db.entries.put({ ...theirs, conflictWith: undefined, syncStatus: 'synced' })
 }
+
+export class ConversionError extends Error {}
+
+/**
+ * Reclassifies an item that was recorded as "unlisted" into a catalog asset
+ * type.
+ *
+ * This happens constantly in a real exercise: an inspector finds something
+ * that is not on the checklist and records it as unlisted, which is correct,
+ * and the catalog catches up afterwards. Without this the variance report
+ * counts it as an unexpected find for ever and the per-type totals stay wrong.
+ *
+ * Tag numbers are deliberately left alone. They may already be printed and
+ * stuck on the furniture, and a tag's job is to identify one physical object,
+ * not to encode its classification — so a converted item can keep a prefix
+ * derived from its old name. The change is written to the edit log, so the
+ * register shows what it used to be.
+ */
+export async function convertToAssetType(entryId: string, assetType: AssetType, actorId: string): Promise<InspectionEntry> {
+  const entry = await db.entries.get(entryId)
+  if (!entry) throw new ConversionError('entry.notRecorded')
+  if (!entry.isUnlistedItem) throw new ConversionError('convert.alreadyListed')
+
+  // One entry per asset type per room is assumed everywhere — the room
+  // checklist, the progress counts and the [roomId+assetTypeId] index all
+  // rely on it, so a merge would have to be a different, explicit action.
+  const clash = await db.entries.where('[roomId+assetTypeId]').equals([entry.roomId, assetType.id]).first()
+  if (clash && !clash.deleted) throw new ConversionError('convert.alreadyInRoom')
+
+  const was = entry.unlistedItemName?.trim() || 'Unlisted item'
+  const converted: InspectionEntry = {
+    ...entry,
+    assetTypeId: assetType.id,
+    isUnlistedItem: false,
+    unlistedItemName: undefined,
+    editHistory: [
+      ...(entry.editHistory ?? []),
+      {
+        field: 'assetType',
+        oldValue: `Unlisted: ${was}`,
+        newValue: assetType.name,
+        editedBy: actorId,
+        editedAt: Date.now(),
+      },
+    ].slice(-EDIT_HISTORY_LIMIT),
+    updatedAt: Date.now(),
+    syncStatus: 'pending',
+  }
+
+  await db.entries.put(converted)
+  return converted
+}
