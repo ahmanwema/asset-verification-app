@@ -324,3 +324,20 @@ describe('edit log sheet', () => {
     expect(remarks[1]['New Value']).toBe('first change')
   })
 })
+
+describe('label data', () => {
+  it('carries the entry id and condition so a label can show its photo', async () => {
+    await populate()
+    const { collectLabels } = await import('./labels')
+    const sheet = await collectLabels({ exerciseId: fx.exercise.id, scope: 'exercise' })
+
+    const chair = sheet.labels.find((l) => l.description === 'Student Chair')!
+    expect(chair.entryId).toBeTruthy()
+    expect(chair.condition).toBe('G')
+
+    // Every tag of a multi-item entry points back at the same entry.
+    const chairTags = sheet.labels.filter((l) => l.description === 'Student Chair')
+    expect(new Set(chairTags.map((l) => l.entryId)).size).toBe(1)
+    expect(chairTags).toHaveLength(30)
+  })
+})

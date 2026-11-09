@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
-import { collectLabels, printLabels, qrDataUrl, type LabelScope } from '../lib/labels'
+import { collectLabels, printLabels, qrDataUrl, type LabelData, type LabelScope } from '../lib/labels'
+import { photoBlob } from '../lib/photos'
 import { useSession } from '../state/session'
 import { useT } from '../i18n'
-import { Button, Card, EmptyState, Field, SectionTitle, Select, Toast } from '../components/ui'
+import { Button, CONDITION_STYLE, Card, EmptyState, Field, SectionTitle, Select, Sheet, Toast } from '../components/ui'
 
 export default function LabelsPage() {
   const t = useT()
@@ -15,6 +16,7 @@ export default function LabelsPage() {
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [previewQr, setPreviewQr] = useState<string | null>(null)
+  const [selected, setSelected] = useState<LabelData | null>(null)
 
   const floors = useLiveQuery(async () => {
     if (!exercise) return []
@@ -134,13 +136,23 @@ export default function LabelsPage() {
             </div>
           </Card>
 
+          <p className="-mt-1 px-1 text-xs text-slate-500">{t('labels.tapForPhoto')}</p>
+
           <Card className="divide-y divide-slate-100">
             {sheet.labels.slice(0, 60).map((l) => (
-              <div key={l.tag} className="flex items-center justify-between gap-2 px-3 py-2 text-xs">
+              <button
+                key={l.tag}
+                type="button"
+                onClick={() => setSelected(l)}
+                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs active:bg-slate-50"
+              >
                 <span className="font-mono font-bold text-slate-800">{l.tag}</span>
                 <span className="min-w-0 flex-1 truncate text-slate-600">{l.description}</span>
                 <span className="shrink-0 text-slate-400">{l.room}</span>
-              </div>
+                <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-slate-300" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
             ))}
             {sheet.labels.length > 60 && (
               <p className="px-3 py-2 text-center text-xs text-slate-500">
@@ -153,7 +165,58 @@ export default function LabelsPage() {
         <EmptyState title={t('labels.nothing')} hint={t('reports.nothing')} />
       )}
 
+      <LabelPhotoSheet label={selected} onClose={() => setSelected(null)} />
+
       <Toast message={toast} />
     </div>
+  )
+}
+
+/**
+ * The photo taken when the item was recorded, so whoever is sticking labels
+ * can confirm the tag belongs to the thing in front of them before it goes on.
+ */
+function LabelPhotoSheet({ label, onClose }: { label: LabelData | null; onClose: () => void }) {
+  const t = useT()
+  const photos = useLiveQuery(
+    async () => (label ? db.photos.where('entryId').equals(label.entryId).toArray() : []),
+    [label?.entryId],
+  )
+
+  const urls = useMemo(
+    () => (photos ?? []).map((p) => ({ id: p.id, url: URL.createObjectURL(photoBlob(p)) })),
+    [photos],
+  )
+  useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u.url)), [urls])
+
+  if (!label) return null
+
+  return (
+    <Sheet open onClose={onClose} title={label.tag}>
+      <div className="space-y-3">
+        <div>
+          <p className="font-semibold text-slate-900">{label.description}</p>
+          <p className="text-xs text-slate-500">
+            {label.floor} · {label.room}
+            {label.serial ? ` · ${label.serial}` : ''}
+          </p>
+          <span className={`chip mt-1 inline-block ${CONDITION_STYLE[label.condition].chip}`}>
+            {t(`condition.${label.condition}`)}
+          </span>
+        </div>
+
+        {photos === undefined ? (
+          <p className="text-sm text-slate-500">{t('common.loading')}</p>
+        ) : urls.length === 0 ? (
+          <p className="rounded-xl bg-slate-50 p-4 text-center text-sm text-slate-500">{t('labels.noPhoto')}</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            {urls.map((u) => (
+              <img key={u.id} src={u.url} alt="" className="w-full rounded-xl object-cover" />
+            ))}
+          </div>
+        )}
+      </div>
+    </Sheet>
   )
 }

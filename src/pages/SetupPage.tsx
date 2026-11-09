@@ -4,7 +4,7 @@ import { db, uid } from '../db/db'
 import { sha256 } from '../lib/hash'
 import { deriveCode, deriveRoomCode } from '../lib/tags'
 import { formatBytes, storageEstimate } from '../lib/photos'
-import { createTeamAccount, resetLocalData } from '../lib/sync'
+import { createTeamAccount, getToken, resetLocalData } from '../lib/sync'
 import type { StringKey } from '../i18n/strings'
 import { startFresh } from '../db/seed'
 import {
@@ -786,6 +786,8 @@ function VisionSettings() {
 function DataTab() {
   const t = useT()
   const storage = useLiveQuery(() => storageEstimate(), [])
+  const connected = useLiveQuery(async () => Boolean(await getToken()), [])
+
   const counts = useLiveQuery(async () => {
     const [entries, photos, rooms, signoffs] = await Promise.all([
       db.entries.count(),
@@ -800,19 +802,19 @@ function DataTab() {
     <div className="space-y-3">
       <Card className="space-y-1 p-4 text-sm">
         <p className="flex justify-between">
-          <span className="text-slate-600">{t('nav.inspect')}</span>
+          <span className="text-slate-600">{t('setup.countEntries')}</span>
           <span className="font-bold tabular-nums">{counts?.entries ?? 0}</span>
         </p>
         <p className="flex justify-between">
-          <span className="text-slate-600">{t('dash.photos')}</span>
+          <span className="text-slate-600">{t('setup.countPhotos')}</span>
           <span className="font-bold tabular-nums">{counts?.photos ?? 0}</span>
         </p>
         <p className="flex justify-between">
-          <span className="text-slate-600">{t('common.rooms')}</span>
+          <span className="text-slate-600">{t('setup.countRooms')}</span>
           <span className="font-bold tabular-nums">{counts?.rooms ?? 0}</span>
         </p>
         <p className="flex justify-between">
-          <span className="text-slate-600">{t('room.signoff')}</span>
+          <span className="text-slate-600">{t('setup.countSignoffs')}</span>
           <span className="font-bold tabular-nums">{counts?.signoffs ?? 0}</span>
         </p>
         {storage && (
@@ -838,15 +840,20 @@ function DataTab() {
         </Button>
         <p className="text-xs text-slate-500">{t('setup.startFreshHint')}</p>
 
-        <Button
-          variant="secondary"
-          full
-          onClick={() => {
-            if (window.confirm(t('setup.resetConfirm'))) void resetLocalData()
-          }}
-        >
-          {t('setup.resetDemo')}
-        </Button>
+        {/* Loading the sample over a real exercise is never what anyone wants,
+            so this is offered only on a device that is not attached to an
+            institution on the server. */}
+        {!connected && (
+          <Button
+            variant="secondary"
+            full
+            onClick={() => {
+              if (window.confirm(t('setup.resetConfirm'))) void resetLocalData()
+            }}
+          >
+            {t('setup.resetDemo')}
+          </Button>
+        )}
       </div>
     </div>
   )

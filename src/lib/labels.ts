@@ -1,4 +1,5 @@
 import { db } from '../db/db'
+import type { Condition } from '../types'
 
 export type LabelScope = 'room' | 'floor' | 'exercise'
 
@@ -8,6 +9,9 @@ export interface LabelData {
   floor: string
   room: string
   serial: string
+  /** The entry this tag belongs to, so its photos can be shown before printing. */
+  entryId: string
+  condition: Condition
 }
 
 export interface LabelSheet {
@@ -58,6 +62,8 @@ export async function collectLabels(opts: {
         floor: floor?.name ?? '',
         room: room?.name ?? '',
         serial: e.serialNumbers[i] ?? '',
+        entryId: e.id,
+        condition: e.condition,
       })
     })
   }

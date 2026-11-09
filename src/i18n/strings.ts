@@ -108,9 +108,16 @@ export const en = {
 
   'setup.startFresh': 'Start fresh — delete the sample data',
   'setup.startFreshHint':
-    'Empties this device and stops the Sufa Schools sample returning, so you can register your own organization, floors and rooms. Does not touch anything already synced to the server.',
+    'Empties this device and stops the sample exercise returning, so you can register your own organization, floors and rooms. Does not touch anything already synced to the server.',
+  'setup.countEntries': 'Items recorded',
+  'setup.countPhotos': 'Photos',
+  'setup.countRooms': 'Rooms with data',
+  'setup.countSignoffs': 'Rooms signed off',
   'setup.startFreshConfirm':
     'Delete everything on this device and start from nothing? The sample exercise will not come back. This cannot be undone.',
+
+  'labels.tapForPhoto': 'Tap a tag to see the photo taken when it was recorded',
+  'labels.noPhoto': 'No photo was taken for this item',
 
   'register.title': 'Register an institution',
   'register.subtitle': 'Create your organization and the first administrator account',
@@ -264,7 +271,7 @@ export const en = {
   'setup.passwordKeep': 'leave blank to keep current',
   'setup.data': 'Data',
   'setup.resetDemo': 'Reset to sample data',
-  'setup.resetConfirm': 'Delete all local data and reload the sample exercise?',
+  'setup.resetConfirm': 'Delete all local data on this device and load the sample exercise instead?',
   'setup.codeHint': 'Used in tag numbers',
   'setup.deleteBlocked': 'Cannot delete: inspection data already recorded here',
   'setup.inactive': 'Inactive',
@@ -386,9 +393,16 @@ export const sw: Record<StringKey, string> = {
 
   'setup.startFresh': 'Anza upya — futa data ya majaribio',
   'setup.startFreshHint':
-    'Hufuta kila kitu kwenye kifaa hiki na kuzuia sampuli ya Sufa Schools kurudi, ili usajili taasisi, ghorofa na vyumba vyako mwenyewe. Haigusi kilichokwisha kwenda kwenye server.',
+    'Hufuta kila kitu kwenye kifaa hiki na kuzuia zoezi la mfano kurudi, ili usajili taasisi, ghorofa na vyumba vyako mwenyewe. Haigusi kilichokwisha kwenda kwenye server.',
+  'setup.countEntries': 'Vifaa vilivyorekodiwa',
+  'setup.countPhotos': 'Picha',
+  'setup.countRooms': 'Vyumba vyenye taarifa',
+  'setup.countSignoffs': 'Vyumba vilivyosainiwa',
   'setup.startFreshConfirm':
     'Futa kila kitu kwenye kifaa hiki na uanze bila kitu? Sampuli haitarudi. Hatua hii hairudishwi.',
+
+  'labels.tapForPhoto': 'Gusa lebo kuona picha iliyopigwa wakati wa kurekodi',
+  'labels.noPhoto': 'Hakuna picha iliyopigwa kwa kifaa hiki',
 
   'register.title': 'Sajili taasisi',
   'register.subtitle': 'Tengeneza taasisi yako na akaunti ya msimamizi wa kwanza',
@@ -542,7 +556,7 @@ export const sw: Record<StringKey, string> = {
   'setup.passwordKeep': 'acha wazi kubaki lile lile',
   'setup.data': 'Taarifa',
   'setup.resetDemo': 'Rejesha taarifa za mfano',
-  'setup.resetConfirm': 'Futa taarifa zote za kifaa hiki na upakie zoezi la mfano?',
+  'setup.resetConfirm': 'Futa taarifa zote za kifaa hiki na upakie zoezi la mfano badala yake?',
   'setup.codeHint': 'Hutumika kwenye namba za lebo',
   'setup.deleteBlocked': 'Haiwezi kufutwa: kuna taarifa za ukaguzi hapa',
   'setup.inactive': 'Haitumiki',
