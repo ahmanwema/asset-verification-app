@@ -134,6 +134,53 @@ describe('detail columns', () => {
     const worst = condition[0]
     expect(worst.Item).toBe('Projector Stand')
     expect(worst['Position in Room']).toBe('Near window row 3')
+    expect(worst.Description).toContain('broken rear leg')
+  })
+
+  it('carries every detail field into the room summary', async () => {
+    await populate()
+    const { rooms } = await buildReportBundle(fx.exercise.id)
+    const chair = rooms.find((r) => r.Item === 'Student Chair')!
+
+    expect(chair['Item Type']).toBe('Single-seater student chair')
+    expect(chair.Material).toBe('Wooden seat and backrest with metal frame')
+    expect(chair.Colour).toBe('Light Brown / Grey')
+    expect(chair['Additional Features']).toBe('Pen groove on tabletop')
+    expect(chair['Position in Room']).toBe('Front left corner')
+    expect(chair.Description).toContain('grey metal legs')
+    expect(chair['AI Assisted']).toBe('Yes')
+    expect(chair.Edits).toBe(0)
+  })
+
+  it('carries every detail field into the condition report', async () => {
+    await populate()
+    const { condition } = await buildReportBundle(fx.exercise.id)
+    const chair = condition.find((r) => r.Item === 'Student Chair')!
+
+    expect(chair['Item Type']).toBe('Single-seater student chair')
+    expect(chair.Material).toBe('Wooden seat and backrest with metal frame')
+    expect(chair.Colour).toBe('Light Brown / Grey')
+    expect(chair['Additional Features']).toBe('Pen groove on tabletop')
+    expect(chair['Position in Room']).toBe('Front left corner')
+    expect(chair.Description).toContain('grey metal legs')
+    expect(chair['AI Assisted']).toBe('Yes')
+  })
+
+  it('reports the same detail columns in all three sheets', async () => {
+    await populate()
+    const { register, rooms, condition } = await buildReportBundle(fx.exercise.id)
+    const DETAILS = [
+      'Item Type',
+      'Material',
+      'Colour',
+      'Description',
+      'Additional Features',
+      'Position in Room',
+      'AI Assisted',
+    ]
+    for (const sheet of [register, rooms, condition]) {
+      expect(Object.keys(sheet[0])).toEqual(expect.arrayContaining(DETAILS))
+    }
   })
 })
 

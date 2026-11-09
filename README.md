@@ -211,7 +211,7 @@ sheet with the exercise metadata.
 |---|---|
 | Fixed assets register | One row per tagged item: tag, description, location, serial, brand/model, condition, the six detail fields, inspector, AI-assisted flag |
 | Room-by-room summary | Everything found per room with the detail fields, plus a Room Totals sheet with sign-off state |
-| Condition report | Fair / Poor / Unserviceable only, Unserviceable first, with position and description |
+| Condition report | Fair / Poor / Unserviceable only, Unserviceable first, with position and the full physical description so a repair team can find and recognise the item |
 | Variance report | Expected but not found, unlisted items found, rooms never inspected |
 | Tag number register | Every issued tag in sequence, with a Printed column for the label run |
 | Edit log | Every field changed after an item was first recorded: old value, new value, who, when |
@@ -269,7 +269,7 @@ missing.
 ## Testing
 
 ```bash
-npm test          # 87 tests
+npm test          # 90 tests
 npm run typecheck
 ```
 
