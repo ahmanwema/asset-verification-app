@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db } from '../db/db'
+import { db, getMeta } from '../db/db'
 import { useI18n, useT } from '../i18n'
 import { useOnline, useSession } from '../state/session'
 import { getToken, syncNow } from '../lib/sync'
@@ -67,6 +67,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
   const location = useLocation()
   const syncing = useRef(false)
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    const timer = setInterval(() => setTick((n) => n + 1), 60_000)
+    return () => clearInterval(timer)
+  }, [])
 
   const org = useLiveQuery(async () => {
     if (!exercise) return undefined
@@ -83,6 +88,18 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }, [])
 
   const conflicts = useLiveQuery(() => db.entries.where('syncStatus').equals('conflict').count(), [])
+
+  /**
+   * How long since this device last heard from the server. A screen quietly
+   * showing a floor plan that changed hours ago is worse than one that admits
+   * it is behind, and it is what sent us looking for a sync bug that was a
+   * suspended timer.
+   */
+  const stale = useLiveQuery(async () => {
+    if (!(await getToken())) return false
+    const last = await getMeta<number>('lastSyncAt', 0)
+    return last > 0 && Date.now() - last > 10 * 60 * 1000
+  }, [tick])
 
   /**
    * Background sync.
@@ -108,13 +125,28 @@ export default function AppShell({ children }: { children: ReactNode }) {
   // One pass shortly after load, then a slow heartbeat. A device that has just
   // signed in has nothing to push and everything to pull, and a push that
   // failed on a weak signal must not wait for someone to notice it.
+  //
+  // The heartbeat alone is not enough. Browsers throttle timers in a tab that
+  // is not being looked at, and suspend them altogether on a sleeping laptop,
+  // so a desktop left open beside the phone falls hours behind and shows a
+  // floor plan that no longer exists. Coming back to the tab is exactly the
+  // moment its contents matter, so that is when it syncs.
   useEffect(() => {
     if (!online) return
     const first = setTimeout(() => void runSync(), 1200)
     const beat = setInterval(() => void runSync(), 60_000)
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void runSync()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+
     return () => {
       clearTimeout(first)
       clearInterval(beat)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
     }
   }, [online, runSync])
 
@@ -151,8 +183,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
             className="relative rounded-lg border border-white/30 px-2 py-1 text-xs font-bold"
             aria-label={t('nav.sync')}
           >
-            <span className={`mr-1 inline-block h-2 w-2 rounded-full ${online ? 'bg-emerald-300' : 'bg-amber-300'}`} />
-            {pending ? pending : online ? t('common.online') : t('common.offline')}
+            <span
+              className={`mr-1 inline-block h-2 w-2 rounded-full ${
+                !online ? 'bg-amber-300' : stale ? 'bg-amber-300' : 'bg-emerald-300'
+              }`}
+            />
+            {pending ? pending : !online ? t('common.offline') : stale ? t('sync.stale') : t('common.online')}
             {Boolean(conflicts) && (
               <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold">
                 !

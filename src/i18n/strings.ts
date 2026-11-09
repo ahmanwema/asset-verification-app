@@ -155,6 +155,7 @@ export const en = {
   'sync.refetchAll': 'Re-download everything',
   'sync.refetchAllHint':
     'Asks the server for the whole exercise again. Use it when another device shows something this one does not. Nothing saved here is lost.',
+  'sync.stale': 'Behind',
   'sync.wasDeleted': 'Deleted',
   'sync.notConnected': 'This device is not connected to the server',
   'sync.notConnectedHint': 'Sign in below to upload and receive work.',
@@ -480,6 +481,7 @@ export const sw: Record<StringKey, string> = {
   'sync.refetchAll': 'Shusha kila kitu upya',
   'sync.refetchAllHint':
     'Huomba server irudishe zoezi zima. Tumia pale kifaa kingine kinaonyesha kitu ambacho hiki hakina. Hakuna kilichohifadhiwa hapa kitakachopotea.',
+  'sync.stale': 'Nyuma',
   'sync.wasDeleted': 'Imefutwa',
   'sync.notConnected': 'Kifaa hiki hakijaunganishwa na server',
   'sync.notConnectedHint': 'Ingia hapa chini ili kupeleka na kupokea kazi.',
