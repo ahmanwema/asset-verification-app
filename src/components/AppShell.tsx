@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db, getMeta } from '../db/db'
 import { useI18n, useT } from '../i18n'
 import { useOnline, useSession } from '../state/session'
-import { getToken, syncNow } from '../lib/sync'
+import { getToken, resyncEverything, syncNow } from '../lib/sync'
 import type { StringKey } from '../i18n/strings'
 
 const NAV: Array<{ to: string; key: StringKey; icon: ReactNode }> = [
@@ -67,6 +67,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
   const location = useLocation()
   const syncing = useRef(false)
+  const reconciled = useRef(false)
   const [tick, setTick] = useState(0)
   useEffect(() => {
     const timer = setInterval(() => setTick((n) => n + 1), 60_000)
@@ -111,20 +112,23 @@ export default function AppShell({ children }: { children: ReactNode }) {
    * nothing synced again until a reload. That is how a phone ends up sitting
    * on "3 waiting" with a perfectly good connection.
    */
-  const runSync = useCallback(async () => {
+  const runSync = useCallback(async (everything = false) => {
     if (syncing.current) return
     if (!(await getToken())) return
     syncing.current = true
     try {
-      await syncNow()
+      const result = everything ? await resyncEverything() : await syncNow()
+      if (everything && result.ok) reconciled.current = true
     } finally {
       syncing.current = false
     }
   }, [])
 
-  // One pass shortly after load, then a slow heartbeat. A device that has just
-  // signed in has nothing to push and everything to pull, and a push that
-  // failed on a weak signal must not wait for someone to notice it.
+  // Reconcile from the beginning once after every app launch, then use cheap
+  // incremental passes. An older client could advance its watermark past a
+  // room it had declined locally; incremental sync can never offer that room
+  // again, however many times the device reconnects. A full first pass repairs
+  // that historical gap, while still protecting pending work and conflicts.
   //
   // The heartbeat alone is not enough. Browsers throttle timers in a tab that
   // is not being looked at, and suspend them altogether on a sleeping laptop,
@@ -133,11 +137,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
   // moment its contents matter, so that is when it syncs.
   useEffect(() => {
     if (!online) return
-    const first = setTimeout(() => void runSync(), 1200)
-    const beat = setInterval(() => void runSync(), 60_000)
+    const reconcileIfNeeded = () => void runSync(!reconciled.current)
+    const first = setTimeout(reconcileIfNeeded, 1200)
+    const beat = setInterval(reconcileIfNeeded, 60_000)
 
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void runSync()
+      if (document.visibilityState === 'visible') reconcileIfNeeded()
     }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('focus', onVisible)
