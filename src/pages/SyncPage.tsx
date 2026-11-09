@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, getMeta } from '../db/db'
-import { login as serverLogin, loadSyncState, logoutSync, setServerUrl, syncNow } from '../lib/sync'
+import { lastSyncError, loadSyncState, login as serverLogin, logoutSync, setServerUrl, syncNow } from '../lib/sync'
 import { resolveConflict } from '../lib/entries'
 import { formatBytes, storageEstimate } from '../lib/photos'
 import { useOnline, useSession } from '../state/session'
@@ -15,6 +15,7 @@ export default function SyncPage() {
   const { inspector } = useSession()
   const [toast, setToast] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const lastError = useLiveQuery(() => lastSyncError(), [])
   const [urlDraft, setUrlDraft] = useState<string | null>(null)
   const [email, setEmail] = useState(inspector?.email ?? '')
   const [password, setPassword] = useState('')
@@ -121,6 +122,11 @@ export default function SyncPage() {
           {busy ? t('sync.syncing') : t('sync.now')}
         </Button>
 
+        {lastError && (
+          <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+            {t('sync.lastFailed')}: {lastError}
+          </p>
+        )}
         {!connected && <p className="text-xs text-amber-700">{t('sync.serverUrl')} — {t('login.title')}</p>}
         {!online && <p className="text-xs text-slate-500">{t('sync.offlineHint')}</p>}
       </Card>

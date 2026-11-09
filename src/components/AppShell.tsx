@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
@@ -85,54 +85,45 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const conflicts = useLiveQuery(() => db.entries.where('syncStatus').equals('conflict').count(), [])
 
   /**
-   * First sync of the session, whether or not anything is waiting to go up.
+   * Background sync.
    *
-   * The opportunistic sync below only fires when something is pending, which
-   * is never true on a device that has just signed in: it has an empty
-   * database and everything to receive. Without this, a second phone shows
-   * "Nothing here yet" until someone finds Sync by hand.
+   * The latch is released unconditionally. It used to be released only if the
+   * effect had not been cleaned up, and the effect is cleaned up every time
+   * `pending` changes — that is, every time the inspector saves. A save while
+   * a sync was in flight left the latch held for the life of the page, and
+   * nothing synced again until a reload. That is how a phone ends up sitting
+   * on "3 waiting" with a perfectly good connection.
    */
-  const pulledOnce = useRef(false)
-  useEffect(() => {
-    if (!online || pulledOnce.current || syncing.current) return
-    pulledOnce.current = true
-    let cancelled = false
-    void (async () => {
-      if (!(await getToken())) {
-        pulledOnce.current = false // not connected yet; try again once it is
-        return
-      }
-      syncing.current = true
-      try {
-        await syncNow()
-      } finally {
-        if (!cancelled) syncing.current = false
-      }
-    })()
-    return () => {
-      cancelled = true
+  const runSync = useCallback(async () => {
+    if (syncing.current) return
+    if (!(await getToken())) return
+    syncing.current = true
+    try {
+      await syncNow()
+    } finally {
+      syncing.current = false
     }
-  }, [online])
+  }, [])
 
-  // Opportunistic sync: when the signal comes back and something is waiting.
+  // One pass shortly after load, then a slow heartbeat. A device that has just
+  // signed in has nothing to push and everything to pull, and a push that
+  // failed on a weak signal must not wait for someone to notice it.
   useEffect(() => {
-    if (!online || !pending || syncing.current) return
-    let cancelled = false
-    const run = async () => {
-      if (!(await getToken())) return
-      syncing.current = true
-      try {
-        await syncNow()
-      } finally {
-        if (!cancelled) syncing.current = false
-      }
-    }
-    const timer = setTimeout(() => void run(), 1500)
+    if (!online) return
+    const first = setTimeout(() => void runSync(), 1200)
+    const beat = setInterval(() => void runSync(), 60_000)
     return () => {
-      cancelled = true
-      clearTimeout(timer)
+      clearTimeout(first)
+      clearInterval(beat)
     }
-  }, [online, pending])
+  }, [online, runSync])
+
+  // And promptly when something is waiting, so a save reaches the team fast.
+  useEffect(() => {
+    if (!online || !pending) return
+    const timer = setTimeout(() => void runSync(), 1500)
+    return () => clearTimeout(timer)
+  }, [online, pending, runSync])
 
   return (
     <div className="flex min-h-screen flex-col">

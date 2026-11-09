@@ -7,10 +7,10 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { db, getMeta } from '../db/db'
+import { db, getMeta, setMeta } from '../db/db'
 import { resetDb, seedFixture, type Fixture } from '../test/fixtures'
 import { resolveConflict, saveEntry } from './entries'
-import { ensureEntryPhotos, loadSyncState, login, pendingRoomCount, setServerUrl, syncNow } from './sync'
+import { ensureEntryPhotos, lastSyncError, loadSyncState, login, pendingRoomCount, setServerUrl, syncNow } from './sync'
 
 const PORT = 4791
 const BASE = `http://127.0.0.1:${PORT}/api`
@@ -310,5 +310,23 @@ describe('photo download', () => {
     await login('admin@test.local', 'secret123')
     const entry = await saveEntry(draft())
     expect(await ensureEntryPhotos(entry.id)).toBe(0)
+  })
+})
+
+describe('sync failure is visible', () => {
+  it('records why a sync failed, and clears it on the next success', async () => {
+    await login('admin@test.local', 'secret123')
+    await saveEntry(draft())
+
+    // A sync with no token stored cannot run.
+    await setMeta('syncToken', null)
+    const failed = await syncNow()
+    expect(failed.ok).toBe(false)
+    expect(await lastSyncError()).toBe('not-connected')
+
+    await login('admin@test.local', 'secret123')
+    const ok = await syncNow()
+    expect(ok.ok).toBe(true)
+    expect(await lastSyncError()).toBeNull()
   })
 })

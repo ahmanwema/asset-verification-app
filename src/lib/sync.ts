@@ -142,14 +142,24 @@ function stripForPush(table: SyncTable, rec: AnyRecord): AnyRecord {
  * server since the last run, then upload pending photos. Conflicts come back
  * from the server and are stored on the local entry for the user to resolve.
  */
+/** Last sync outcome, so a background failure is visible instead of silent. */
+export async function lastSyncError(): Promise<string | null> {
+  return getMeta<string | null>('lastSyncError', null)
+}
+
+async function remember(result: SyncResult): Promise<SyncResult> {
+  await setMeta('lastSyncError', result.ok ? null : (result.error ?? 'failed'))
+  return result
+}
+
 export async function syncNow(): Promise<SyncResult> {
   const base = await getServerUrl()
   const token = await getToken()
   if (!token) {
-    return { ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: 'not-connected' }
+    return remember({ ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: 'not-connected' })
   }
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    return { ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: 'offline' }
+    return remember({ ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: 'offline' })
   }
 
   const since = await getMeta<number>('lastSyncAt', 0)
@@ -179,21 +189,21 @@ export async function syncNow(): Promise<SyncResult> {
     })
     if (res.status === 401) {
       await setMeta('syncToken', null)
-      return { ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: 'unauthorized' }
+      return remember({ ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: 'unauthorized' })
     }
     if (!res.ok) {
       return { ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: `http-${res.status}` }
     }
     payload = await res.json()
   } catch (err) {
-    return {
+    return remember({
       ok: false,
       pushed: 0,
       pulled: 0,
       conflicts: 0,
       photosUploaded: 0,
       error: err instanceof Error ? err.message : 'network',
-    }
+    })
   }
 
   const conflictIds = new Map<SyncTable, Set<string>>()
@@ -250,7 +260,7 @@ export async function syncNow(): Promise<SyncResult> {
   const photosUploaded = await uploadPendingPhotos(base, token)
   await setMeta('lastSyncAt', payload.serverTime ?? Date.now())
 
-  return { ok: true, pushed, pulled, conflicts, photosUploaded }
+  return remember({ ok: true, pushed, pulled, conflicts, photosUploaded })
 }
 
 async function uploadPendingPhotos(base: string, token: string): Promise<number> {

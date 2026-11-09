@@ -148,6 +148,8 @@ export const en = {
   'team.errPassword': 'The password must be at least 8 characters',
   'team.errAdminOnly': 'Only an administrator can add accounts',
 
+  'sync.lastFailed': 'Last sync failed',
+
   'convert.title': 'Move to an asset type',
   'convert.hint': 'Recorded as unlisted. Move it into the catalog so it counts as an expected item instead of an unexpected find.',
   'convert.choose': 'Choose an asset type…',
@@ -441,6 +443,8 @@ export const sw: Record<StringKey, string> = {
   'team.errEmailTaken': 'Barua pepe hiyo tayari imesajiliwa',
   'team.errPassword': 'Password lazima iwe na angalau herufi 8',
   'team.errAdminOnly': 'Msimamizi pekee ndiye anayeweza kuongeza akaunti',
+
+  'sync.lastFailed': 'Sync ya mwisho imeshindwa',
 
   'convert.title': 'Hamishia kwenye aina ya mali',
   'convert.hint': 'Imerekodiwa kama isiyo orodhani. Ihamishie kwenye katalogi ili ihesabiwe kama kitu kinachotarajiwa badala ya kilichoongezeka.',
