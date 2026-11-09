@@ -6,7 +6,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import http from 'node:http'
-import { handleVisionIdentify, normalizeVisionResult, VISION_SYSTEM_PROMPT } from './vision.js'
+import { VISION_SYSTEM_PROMPT, adaptRequest, defaultModel, handleVisionIdentify, normalizeVisionResult, parseJsonLoose, reasoningEffort } from './vision.js'
 
 let stub
 let stubPort
@@ -215,5 +215,81 @@ describe('configuration', () => {
     const { status, payload } = await handleVisionIdentify(body({ image: '' }))
     expect(status).toBe(400)
     expect(payload.error).toBe('missing-image')
+  })
+})
+
+describe('model compatibility', () => {
+  it('reads the rejected parameter from the API error and adapts', () => {
+    const req = { model: 'gpt-5.4-mini', temperature: 0.1, max_tokens: 700, reasoning_effort: 'high' }
+
+    const tempError = JSON.stringify({
+      error: { message: "Unsupported value: 'temperature' does not support 0.1", param: 'temperature' },
+    })
+    expect(adaptRequest(req, tempError)).toBe('temperature')
+    expect(req.temperature).toBeUndefined()
+
+    // max_tokens is renamed rather than dropped: the cap still matters.
+    const maxError = JSON.stringify({
+      error: { message: "Unsupported parameter: 'max_tokens' is not supported", param: 'max_tokens' },
+    })
+    expect(adaptRequest(req, maxError)).toContain('max_completion_tokens')
+    expect(req.max_tokens).toBeUndefined()
+    expect(req.max_completion_tokens).toBe(700)
+
+    expect(adaptRequest(req, JSON.stringify({ error: { param: 'reasoning_effort' } }))).toBe('reasoning_effort')
+    expect(req.reasoning_effort).toBeUndefined()
+  })
+
+  it('finds the parameter in a plain-text error too', () => {
+    const req = { temperature: 0.1 }
+    expect(adaptRequest(req, "Unsupported parameter: 'temperature' is not supported with this model")).toBe(
+      'temperature',
+    )
+  })
+
+  it('gives up rather than looping on an error it cannot act on', () => {
+    expect(adaptRequest({ model: 'x' }, JSON.stringify({ error: { message: 'rate limited' } }))).toBeNull()
+    expect(adaptRequest({ model: 'x' }, 'not json at all')).toBeNull()
+    // A parameter we must keep is not dropped.
+    expect(adaptRequest({ messages: [] }, JSON.stringify({ error: { param: 'messages' } }))).toBeNull()
+  })
+
+  it('reads JSON back even when the model wraps it in a code fence', () => {
+    expect(parseJsonLoose('{"a":1}')).toEqual({ a: 1 })
+    expect(parseJsonLoose('```json\n{"a":1}\n```')).toEqual({ a: 1 })
+    expect(parseJsonLoose('Here it is:\n{"a":1}\nhope that helps')).toEqual({ a: 1 })
+  })
+
+  it('uses whatever model the server is configured with, new or old', () => {
+    const saved = process.env.OPENAI_MODEL
+    try {
+      process.env.OPENAI_MODEL = 'gpt-5.4-mini'
+      expect(defaultModel()).toBe('gpt-5.4-mini')
+      // A model this build has never heard of must not be silently replaced.
+      process.env.OPENAI_MODEL = 'gpt-9-future'
+      expect(defaultModel()).toBe('gpt-9-future')
+      delete process.env.OPENAI_MODEL
+      expect(defaultModel()).toBe('gpt-4o')
+    } finally {
+      if (saved === undefined) delete process.env.OPENAI_MODEL
+      else process.env.OPENAI_MODEL = saved
+    }
+  })
+
+  it('sends reasoning effort only when it is set to something meaningful', () => {
+    const saved = process.env.OPENAI_REASONING_EFFORT
+    try {
+      delete process.env.OPENAI_REASONING_EFFORT
+      expect(reasoningEffort()).toBeNull()
+      process.env.OPENAI_REASONING_EFFORT = 'none'
+      expect(reasoningEffort()).toBeNull()
+      process.env.OPENAI_REASONING_EFFORT = 'High'
+      expect(reasoningEffort()).toBe('high')
+      process.env.OPENAI_REASONING_EFFORT = 'nonsense'
+      expect(reasoningEffort()).toBeNull()
+    } finally {
+      if (saved === undefined) delete process.env.OPENAI_REASONING_EFFORT
+      else process.env.OPENAI_REASONING_EFFORT = saved
+    }
   })
 })

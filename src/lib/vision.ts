@@ -3,7 +3,7 @@ import { blobToBase64 } from './photos'
 import { getServerUrl, getToken } from './sync'
 import type { Condition } from '../types'
 
-export const VISION_MODELS = ['gpt-4o', 'gpt-4o-mini'] as const
+export const VISION_MODELS = ['gpt-5.4-mini', 'gpt-5.4', 'gpt-4o', 'gpt-4o-mini'] as const
 export type VisionModel = (typeof VISION_MODELS)[number]
 
 export interface VisionResult {

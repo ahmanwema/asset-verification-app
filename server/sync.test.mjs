@@ -230,7 +230,7 @@ describe('vision routes', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.configured).toBe(false) // no OPENAI_API_KEY in this test server
-    expect(body.models).toEqual(['gpt-4o', 'gpt-4o-mini'])
+    expect(body.models).toEqual(['gpt-5.4-mini', 'gpt-5.4', 'gpt-4o', 'gpt-4o-mini'])
   })
 
   it('refuses an unauthenticated identify request', async () => {
