@@ -87,6 +87,79 @@ function entry(over = {}) {
   }
 }
 
+describe('upgrading a database built before multi-tenancy', () => {
+  /** Exactly the schema the single-tenant release created. */
+  async function legacySchema() {
+    await pg.exec('DROP TABLE IF EXISTS records, users, tokens, photos, orgs CASCADE')
+    await pg.exec(`
+      CREATE TABLE records (
+        table_name   TEXT NOT NULL,
+        id           TEXT NOT NULL,
+        updated_at   BIGINT NOT NULL,
+        inspector_id TEXT,
+        deleted      BOOLEAN NOT NULL DEFAULT FALSE,
+        json         JSONB NOT NULL,
+        PRIMARY KEY (table_name, id)
+      );
+      CREATE INDEX records_updated ON records (updated_at);
+      CREATE TABLE users (
+        id     TEXT PRIMARY KEY,
+        email  TEXT UNIQUE NOT NULL,
+        name   TEXT NOT NULL,
+        role   TEXT NOT NULL DEFAULT 'inspector',
+        scrypt TEXT,
+        sha256 TEXT
+      );
+      CREATE TABLE tokens (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at BIGINT NOT NULL);
+      CREATE TABLE photos (
+        id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, exercise_id TEXT NOT NULL,
+        width INTEGER, height INTEGER, created_at BIGINT,
+        content_type TEXT NOT NULL DEFAULT 'image/jpeg', bytes BYTEA NOT NULL
+      );
+    `)
+  }
+
+  it('migrates an existing deployment without losing its data', async () => {
+    await legacySchema()
+    await pg.query(
+      `INSERT INTO users (id, email, name, role, scrypt) VALUES ('usr_old', $1, 'Old Admin', 'admin', $2)`,
+      [ADMIN_EMAIL, scryptHash(ADMIN_PASSWORD)],
+    )
+    await pg.query(
+      `INSERT INTO records (table_name, id, updated_at, inspector_id, deleted, json)
+       VALUES ('entries', 'en_old', 1000, 'usr_old', FALSE, $1)`,
+      [JSON.stringify({ id: 'en_old', quantity: 7 })],
+    )
+
+    await store.init() // the cold start that upgrades the database
+
+    // The old account and its work survive, adopted into one organization.
+    const user = await store.userByEmail(ADMIN_EMAIL)
+    expect(user.orgId).toBeTruthy()
+    const record = await store.recordFor(user.orgId, 'entries', 'en_old')
+    expect(record.json.quantity).toBe(7)
+
+    // And it is a working multi-tenant database afterwards.
+    const { rows } = await pg.query(
+      `SELECT a.attname FROM pg_index i
+       JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+       WHERE i.indrelid = 'records'::regclass AND i.indisprimary ORDER BY a.attname`,
+    )
+    expect(rows.map((r) => r.attname)).toEqual(['id', 'org_id', 'table_name'])
+
+    const login = await handleLogin(store, { email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
+    expect(login.status).toBe(200)
+  })
+
+  it('is safe to run twice, as two cold starts will', async () => {
+    await legacySchema()
+    await store.init()
+    await store.init()
+    const { rows } = await pg.query('SELECT COUNT(*)::int AS n FROM orgs')
+    expect(rows[0].n).toBe(1)
+  })
+})
+
 describe('schema', () => {
   it('creates every table and is safe to run twice', async () => {
     await store.init() // the second cold start must not break on existing tables

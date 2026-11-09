@@ -40,7 +40,6 @@ const SCHEMA = [
      json         JSONB NOT NULL,
      PRIMARY KEY (org_id, table_name, id)
    )`,
-  `CREATE INDEX IF NOT EXISTS records_org_updated ON records (org_id, updated_at)`,
   `CREATE TABLE IF NOT EXISTS users (
      id     TEXT PRIMARY KEY,
      org_id TEXT NOT NULL,
@@ -50,13 +49,11 @@ const SCHEMA = [
      scrypt TEXT,
      sha256 TEXT
    )`,
-  `CREATE INDEX IF NOT EXISTS users_org ON users (org_id)`,
   `CREATE TABLE IF NOT EXISTS tokens (
      token      TEXT PRIMARY KEY,
      user_id    TEXT NOT NULL,
      created_at BIGINT NOT NULL
    )`,
-  `CREATE INDEX IF NOT EXISTS tokens_created ON tokens (created_at)`,
   `CREATE TABLE IF NOT EXISTS photos (
      id           TEXT PRIMARY KEY,
      org_id       TEXT NOT NULL,
@@ -68,7 +65,6 @@ const SCHEMA = [
      content_type TEXT NOT NULL DEFAULT 'image/jpeg',
      bytes        BYTEA NOT NULL
    )`,
-  `CREATE INDEX IF NOT EXISTS photos_org ON photos (org_id)`,
 ]
 
 /**
@@ -102,6 +98,19 @@ const MIGRATIONS = [
 ]
 
 /**
+ * Indexes are created last, after the migrations have added the columns they
+ * cover. Put with the CREATE TABLEs, an index on org_id fails on a database
+ * built before multi-tenancy — the column does not exist yet — and takes the
+ * whole cold start down with it.
+ */
+const INDEXES = [
+  `CREATE INDEX IF NOT EXISTS records_org_updated ON records (org_id, updated_at)`,
+  `CREATE INDEX IF NOT EXISTS users_org ON users (org_id)`,
+  `CREATE INDEX IF NOT EXISTS photos_org ON photos (org_id)`,
+  `CREATE INDEX IF NOT EXISTS tokens_created ON tokens (created_at)`,
+]
+
+/**
  * Two concurrent cold starts can run the same CREATE TABLE IF NOT EXISTS and
  * collide in the system catalog, and the same applies to the migrations below.
  * Postgres reports these as duplicate-object errors, which are harmless here:
@@ -128,6 +137,7 @@ export function createStore(sql) {
     async init() {
       for (const statement of SCHEMA) await tolerant(statement)
       for (const statement of MIGRATIONS) await tolerant(statement)
+      for (const statement of INDEXES) await tolerant(statement)
       await store.seedAdmin()
     },
 

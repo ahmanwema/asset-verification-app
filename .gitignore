@@ -14,3 +14,5 @@ server/uploads
 .env
 .env.local
 *.tsbuildinfo
+
+.vercel
