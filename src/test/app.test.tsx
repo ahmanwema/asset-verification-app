@@ -289,6 +289,40 @@ describe('capture & identify', () => {
   })
 })
 
+describe('edit history', () => {
+  it('logs a change, flags the field and lists it in the history section', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+
+    // First save: recording an item is not an edit, so there is no history yet.
+    await screen.findByDisplayValue('1')
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await screen.findByText('1/16 items checked', undefined, { timeout: 5000 })
+
+    fireEvent.click(screen.getByText('Student Chair'))
+    const qty = await screen.findByDisplayValue('1', undefined, { timeout: 5000 })
+    expect(screen.queryByText('Edit history')).toBeNull()
+
+    fireEvent.change(qty, { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await screen.findByText('1/16 items checked', undefined, { timeout: 5000 })
+
+    fireEvent.click(screen.getByText('Student Chair'))
+    const heading = await screen.findByText('Edit history', undefined, { timeout: 5000 })
+    const card = heading.closest('div.card') as HTMLElement
+
+    // The quantity change is marked on the field itself, not only in the log.
+    expect(screen.getAllByText('edited').length).toBeGreaterThan(0)
+
+    fireEvent.click(heading)
+    expect(await within(card).findByText('Quantity')).toBeTruthy()
+    expect(within(card).getByText('1')).toBeTruthy() // old value
+    expect(within(card).getByText('3')).toBeTruthy() // new value
+  })
+})
+
 describe('dashboard', () => {
   it('rolls the exercise up across floors', async () => {
     await signIn()

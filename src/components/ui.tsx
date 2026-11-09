@@ -35,25 +35,42 @@ export function Field({
   label,
   hint,
   error,
+  edited,
   children,
 }: {
   label: string
   hint?: string
   error?: string
+  /** Text for the "edited" chip, e.g. t('history.edited'); omit when unchanged. */
+  edited?: string
   children: ReactNode
 }) {
-  // The hint sits outside the <label> on purpose: nested, it becomes part of the
-  // accessible name, so a screen reader would read the whole example sentence
-  // back as the field's label.
+  // The hint and the chip sit outside the <label> on purpose: nested, they become
+  // part of the accessible name, so a screen reader would read the whole example
+  // sentence back as the field's label.
   return (
     <div>
       <label className="block">
         <span className="field-label">{label}</span>
         {children}
       </label>
-      {hint && !error && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
+      {(hint || edited) && !error && (
+        <span className="mt-1 flex flex-wrap items-center gap-1.5">
+          {edited && <EditedChip>{edited}</EditedChip>}
+          {hint && <span className="text-xs text-slate-500">{hint}</span>}
+        </span>
+      )}
       {error && <span className="mt-1 block text-xs font-semibold text-red-600">{error}</span>}
     </div>
+  )
+}
+
+/** Marks a field whose value has been changed since the entry was first saved. */
+export function EditedChip({ children }: { children: ReactNode }) {
+  return (
+    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900">
+      {children}
+    </span>
   )
 }
 

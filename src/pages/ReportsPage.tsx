@@ -12,6 +12,7 @@ const REPORTS: Array<{ kind: ReportKind; title: StringKey; desc: StringKey }> = 
   { kind: 'condition', title: 'reports.condition', desc: 'reports.conditionDesc' },
   { kind: 'variance', title: 'reports.variance', desc: 'reports.varianceDesc' },
   { kind: 'tags', title: 'reports.tags', desc: 'reports.tagsDesc' },
+  { kind: 'editlog', title: 'reports.editlog', desc: 'reports.editlogDesc' },
 ]
 
 export default function ReportsPage() {
@@ -31,6 +32,7 @@ export default function ReportsPage() {
       condition: b.condition.length,
       variance: b.variance.length,
       tags: b.tags.length,
+      editlog: b.editLog.length,
     }
   }, [exercise?.id])
 

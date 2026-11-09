@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { db } from '../db/db'
 import { resetDb, seedFixture, type Fixture } from '../test/fixtures'
 import { markNotPresent, saveEntry, signoffRoom } from './entries'
 import { buildReportBundle } from './export-excel'
@@ -186,5 +187,93 @@ describe('tag register and room totals', () => {
     expect(summary.find((r) => r.Metric === 'Items counted')?.Value).toBe(31)
     expect(summary.find((r) => r.Metric === 'Tags issued')?.Value).toBe(31)
     expect(summary.find((r) => r.Metric === 'Organization')?.Value).toBe('Sufa Schools')
+  })
+})
+
+describe('edit log sheet', () => {
+  /** Re-saves the chair entry created by populate(), as a second inspector. */
+  async function editChair(over: Partial<Parameters<typeof saveEntry>[0]>) {
+    const chair = (await db.entries.toArray()).find((e) => e.assetTypeId === fx.chair.id)!
+    return saveEntry({
+      id: chair.id,
+      exerciseId: fx.exercise.id,
+      room: fx.room,
+      floor: fx.floor,
+      assetType: fx.chair,
+      isUnlistedItem: false,
+      quantity: 30,
+      serialNumbers: ['SN-A'],
+      model: 'Classic',
+      brand: 'Furnico',
+      condition: 'G',
+      conditionBreakdown: { G: 28, P: 2 },
+      remarks: 'Two seats cracked',
+      material: 'Wooden seat and backrest with metal frame',
+      colour: 'Light Brown / Grey',
+      itemType: 'Single-seater student chair',
+      additionalFeatures: 'Pen groove on tabletop',
+      description: 'Single-seater student chair with wooden seat, wooden backrest and grey metal legs',
+      specificPosition: 'Front left corner',
+      inspectorId: fx.inspector2.id,
+      notPresent: false,
+      ...over,
+    })
+  }
+
+  it('is empty until something is actually edited', async () => {
+    await populate()
+    const { editLog } = await buildReportBundle(fx.exercise.id)
+    expect(editLog).toEqual([])
+  })
+
+  it('names the field in English, the old and new value, and who changed it', async () => {
+    await populate()
+    await editChair({ brand: 'Dodoma Furniture', material: 'All-metal frame' })
+
+    const { editLog, summary } = await buildReportBundle(fx.exercise.id)
+    expect(editLog.map((r) => r.Field)).toEqual(expect.arrayContaining(['Brand', 'Material']))
+
+    const brand = editLog.find((r) => r.Field === 'Brand')!
+    expect(brand['Old Value']).toBe('Furnico')
+    expect(brand['New Value']).toBe('Dodoma Furniture')
+    expect(brand['Edited By']).toBe('Inspector Two')
+    expect(brand.Item).toBe('Student Chair')
+    expect(brand.Floor).toBe('1st Floor')
+    expect(brand.Room).toBe('P3')
+    expect(brand['Tag Numbers']).toContain('SC-1F-P3-001')
+    expect(String(brand['Edited At'])).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+
+    expect(summary.find((r) => r.Metric === 'Field changes logged')?.Value).toBe(editLog.length)
+  })
+
+  it('spells out the codes the log stores raw', async () => {
+    await populate()
+    await editChair({ condition: 'U', conditionBreakdown: undefined })
+    await markNotPresent({
+      exerciseId: fx.exercise.id,
+      room: fx.room,
+      floor: fx.floor,
+      assetType: fx.chair,
+      inspectorId: fx.inspector2.id,
+    })
+
+    const { editLog } = await buildReportBundle(fx.exercise.id)
+    const cond = editLog.filter((r) => r.Field === 'Condition')
+    expect(cond.some((r) => r['Old Value'] === 'Good' && r['New Value'] === 'Unserviceable')).toBe(true)
+
+    const absent = editLog.find((r) => r.Field === 'Not present')!
+    expect(absent['Old Value']).toBe('No')
+    expect(absent['New Value']).toBe('Yes')
+  })
+
+  it('puts the newest change first', async () => {
+    await populate()
+    await editChair({ remarks: 'first change' })
+    await editChair({ remarks: 'second change' })
+
+    const { editLog } = await buildReportBundle(fx.exercise.id)
+    const remarks = editLog.filter((r) => r.Field === 'Remarks')
+    expect(remarks[0]['New Value']).toBe('second change')
+    expect(remarks[1]['New Value']).toBe('first change')
   })
 })

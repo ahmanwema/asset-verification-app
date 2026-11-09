@@ -5,11 +5,13 @@ import type {
   AssetType,
   Condition,
   ConditionBreakdown,
+  EditRecord,
   Floor,
   InspectionEntry,
   Room,
   RoomSignoff,
 } from '../types'
+import { CONDITIONS } from '../types'
 
 export interface EntryDraft {
   id?: string
@@ -41,6 +43,66 @@ export interface EntryDraft {
 }
 
 export class ValidationError extends Error {}
+
+/**
+ * The fields the edit log watches, with the English label the reports print and
+ * how each is rendered into the log.
+ *
+ * Deliberately not tracked: `updatedAt`, `syncStatus`, `inspectedAt` and
+ * `aiAssisted`. Those move on their own — a sync or a re-save changes them
+ * without anyone editing anything — and logging them would bury the handful of
+ * changes an auditor actually cares about.
+ */
+const TRACKED_FIELDS: Array<{ field: string; label: string; render: (e: InspectionEntry) => string }> = [
+  { field: 'quantity', label: 'Quantity', render: (e) => String(e.quantity) },
+  { field: 'notPresent', label: 'Not present', render: (e) => String(e.notPresent) },
+  { field: 'condition', label: 'Condition', render: (e) => e.condition },
+  {
+    field: 'conditionBreakdown',
+    label: 'Condition breakdown',
+    render: (e) =>
+      CONDITIONS.filter((c) => (e.conditionBreakdown?.[c] ?? 0) > 0)
+        .map((c) => `${e.conditionBreakdown?.[c]} ${c}`)
+        .join(', '),
+  },
+  { field: 'serialNumbers', label: 'Serial number', render: (e) => e.serialNumbers.join(', ') },
+  { field: 'brand', label: 'Brand', render: (e) => e.brand },
+  { field: 'model', label: 'Model', render: (e) => e.model },
+  { field: 'tagNumbers', label: 'Tag numbers', render: (e) => e.tagNumbers.join(', ') },
+  { field: 'itemType', label: 'Item type', render: (e) => e.itemType ?? '' },
+  { field: 'material', label: 'Material', render: (e) => e.material ?? '' },
+  { field: 'colour', label: 'Colour', render: (e) => e.colour ?? '' },
+  { field: 'additionalFeatures', label: 'Additional features', render: (e) => e.additionalFeatures ?? '' },
+  { field: 'specificPosition', label: 'Position in room', render: (e) => e.specificPosition ?? '' },
+  { field: 'description', label: 'Description', render: (e) => e.description ?? '' },
+  { field: 'remarks', label: 'Remarks', render: (e) => e.remarks },
+  { field: 'unlistedItemName', label: 'Item name', render: (e) => e.unlistedItemName ?? '' },
+  { field: 'photos', label: 'Photos', render: (e) => String(e.photoIds.length) },
+]
+
+/** English labels for the report sheet, keyed by field. */
+export const EDIT_FIELD_LABEL: Record<string, string> = Object.fromEntries(
+  TRACKED_FIELDS.map((f) => [f.field, f.label]),
+)
+
+/**
+ * Hard cap on retained records. The whole entry travels to the server as one
+ * JSON row, so an entry edited hundreds of times would otherwise grow until it
+ * slowed every sync on a weak connection. The oldest records are dropped first.
+ */
+export const EDIT_HISTORY_LIMIT = 200
+
+/** Field-by-field comparison of a saved entry against its replacement. */
+function diffEntries(before: InspectionEntry, after: InspectionEntry, editedBy: string): EditRecord[] {
+  const editedAt = Date.now()
+  const changes: EditRecord[] = []
+  for (const { field, render } of TRACKED_FIELDS) {
+    const oldValue = render(before)
+    const newValue = render(after)
+    if (oldValue !== newValue) changes.push({ field, oldValue, newValue, editedBy, editedAt })
+  }
+  return changes
+}
 
 /**
  * Creates or updates an inspection entry, allocating tag numbers to match the
@@ -110,9 +172,18 @@ export async function saveEntry(draft: EntryDraft): Promise<InspectionEntry> {
     isUnlistedItem: draft.isUnlistedItem,
     unlistedItemName: draft.isUnlistedItem ? draft.unlistedItemName?.trim() : undefined,
     notPresent: draft.notPresent,
+    editHistory: existing?.editHistory ?? [],
     updatedAt: Date.now(),
     deleted: false,
     syncStatus: 'pending',
+  }
+
+  // A first save is not an edit, so a new entry starts with an empty log.
+  if (existing) {
+    const changes = diffEntries(existing, entry, draft.inspectorId)
+    if (changes.length > 0) {
+      entry.editHistory = [...entry.editHistory, ...changes].slice(-EDIT_HISTORY_LIMIT)
+    }
   }
 
   await db.entries.put(entry)

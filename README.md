@@ -146,6 +146,31 @@ the phones. It pins the JSON contract, the Good/Fair/Poor/Unserviceable rubric,
 and one firm instruction: never invent a serial number, brand or model that is
 not legible — return `""` instead, because a wrong serial corrupts the register.
 
+### Edit history
+
+Every field change to an item that was **already saved** is logged on the entry
+itself: what changed, from what to what, by whom, and when. A first save is not
+an edit, so a freshly recorded item has an empty log.
+
+Fields that have been changed since are marked `edited` in the form, and the full
+log sits in a collapsed **Edit history** section at the bottom of the entry. It
+reads newest first, with values shown in the inspector's language.
+
+Logged: quantity, not-present, condition and its breakdown, serials, brand,
+model, tag numbers, all six detail fields, remarks, item name, photo count.
+Deliberately not logged: `updatedAt`, `syncStatus`, `inspectedAt` and the
+AI-assisted flag — those move on their own during a sync or a re-save, and would
+bury the handful of changes an auditor cares about.
+
+The log travels with the entry as part of the same JSON row, so it reaches the
+server with the record it belongs to and survives a device being wiped. Each
+entry keeps its newest 200 records (`EDIT_HISTORY_LIMIT` in
+[`src/lib/entries.ts`](src/lib/entries.ts)); beyond that the oldest are dropped,
+so one much-edited item cannot slow every sync on a weak connection.
+
+Entries recorded before this existed keep working: the Dexie v3 migration gives
+them an empty log rather than inventing records for changes nobody wrote down.
+
 ---
 
 ## Offline behaviour
@@ -185,10 +210,11 @@ sheet with the exercise metadata.
 | Report | Contents |
 |---|---|
 | Fixed assets register | One row per tagged item: tag, description, location, serial, brand/model, condition, the six detail fields, inspector, AI-assisted flag |
-| Room-by-room summary | Everything found per room, plus a Room Totals sheet with sign-off state |
+| Room-by-room summary | Everything found per room with the detail fields, plus a Room Totals sheet with sign-off state |
 | Condition report | Fair / Poor / Unserviceable only, Unserviceable first, with position and description |
 | Variance report | Expected but not found, unlisted items found, rooms never inspected |
 | Tag number register | Every issued tag in sequence, with a Printed column for the label run |
+| Edit log | Every field changed after an item was first recorded: old value, new value, who, when |
 
 ## Labels
 
@@ -243,19 +269,19 @@ missing.
 ## Testing
 
 ```bash
-npm test          # 76 tests
+npm test          # 87 tests
 npm run typecheck
 ```
 
 | Suite | Covers |
 |---|---|
 | `src/lib/tags.test.ts` | Tag format, sequence allocation, tag stability when editing |
-| `src/lib/entries.test.ts` | Validation, not-present, sign-off, soft delete, rollups, conflict resolution, detail fields |
-| `src/lib/export-excel.test.ts` | Row shape of all five reports against a populated exercise |
+| `src/lib/entries.test.ts` | Validation, not-present, sign-off, soft delete, rollups, conflict resolution, detail fields, edit history |
+| `src/lib/export-excel.test.ts` | Row shape of all six reports against a populated exercise, including the edit log |
 | `src/lib/sync.test.ts` | Client↔server round trip against a live server: push, pull, conflicts, photo upload |
 | `server/sync.test.mjs` | The protocol itself: auth, conflict rules, soft deletes, photo and vision endpoints |
 | `server/vision.test.mjs` | Photo recognition against a stub OpenAI: request shape, prompt, model override, junk-value repair, timeouts, missing key |
-| `src/test/app.test.tsx` | Sign-in, floor→room→checklist navigation, tag preview, dashboard, language toggle, More details, AI fill and undo |
+| `src/test/app.test.tsx` | Sign-in, floor→room→checklist navigation, tag preview, dashboard, language toggle, More details, AI fill and undo, edit history |
 
 Tests run against a real in-memory IndexedDB (`fake-indexeddb`) and a real spawned
 server process — no mocked database, no mocked HTTP. The vision tests point the

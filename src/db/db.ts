@@ -57,6 +57,21 @@ export class AssetDB extends Dexie {
             entry.specificPosition ??= ''
           })
       })
+
+    // v3 adds the per-field edit log. Existing entries start with an empty one:
+    // their history begins at the first edit after this upgrade, because there is
+    // no record of earlier changes and inventing one would fabricate an audit
+    // trail that nobody actually wrote.
+    this.version(3)
+      .stores({})
+      .upgrade(async (tx) => {
+        await tx
+          .table('entries')
+          .toCollection()
+          .modify((entry: Record<string, unknown>) => {
+            entry.editHistory ??= []
+          })
+      })
   }
 }
 

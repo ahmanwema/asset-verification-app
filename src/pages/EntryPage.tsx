@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db, uid } from '../db/db'
 import { assetName, useI18n, useT } from '../i18n'
 import { useSession } from '../state/session'
-import { ValidationError, deleteEntry, saveEntry } from '../lib/entries'
+import { EDIT_FIELD_LABEL, ValidationError, deleteEntry, saveEntry } from '../lib/entries'
 import { allocateTagNumbers, deriveCode } from '../lib/tags'
 import { breakdownIsValid } from '../lib/queries'
 import { blobToArrayBuffer, compressImage, photoBlob } from '../lib/photos'
@@ -13,6 +13,7 @@ import {
   Button,
   CONDITION_STYLE,
   Card,
+  EditedChip,
   EmptyState,
   Field,
   Segmented,
@@ -29,6 +30,36 @@ interface DraftPhoto {
   width: number
   height: number
   persisted: boolean
+}
+
+/**
+ * Localised labels for the edit log, keyed by the field names `entries.ts` logs.
+ * A field with no entry here falls back to the English label from that module.
+ */
+const HISTORY_FIELD_KEY: Record<string, StringKey> = {
+  quantity: 'entry.quantity',
+  notPresent: 'entry.notPresent',
+  condition: 'entry.condition',
+  conditionBreakdown: 'entry.split',
+  serialNumbers: 'entry.serial',
+  brand: 'entry.brand',
+  model: 'entry.model',
+  tagNumbers: 'entry.tag',
+  itemType: 'entry.itemType',
+  material: 'entry.material',
+  colour: 'entry.colour',
+  additionalFeatures: 'entry.additionalFeatures',
+  specificPosition: 'entry.specificPosition',
+  description: 'entry.description',
+  remarks: 'entry.remarks',
+  unlistedItemName: 'entry.unlistedName',
+  photos: 'entry.photo',
+}
+
+function fmtWhen(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 /** Everything photo recognition may overwrite, kept so "Undo AI fill" is exact. */
@@ -61,18 +92,27 @@ export default function EntryPage() {
   const ctx = useLiveQuery(async () => {
     const room = await db.rooms.get(roomId)
     if (!room) return null
-    const [floor, assetType, assetTypes, entries] = await Promise.all([
+    const [floor, assetType, assetTypes, entries, inspectors] = await Promise.all([
       db.floors.get(room.floorId),
       isUnlisted ? Promise.resolve(undefined) : db.assetTypes.get(assetTypeId),
       db.assetTypes.orderBy('sortOrder').toArray(),
       db.entries.where('roomId').equals(roomId).toArray(),
+      db.inspectors.toArray(),
     ])
     const existing = isUnlisted
       ? editId
         ? await db.entries.get(editId)
         : undefined
       : entries.find((e) => e.assetTypeId === assetTypeId && !e.deleted)
-    return { room, floor, assetType, assetTypes: assetTypes.filter((a) => a.active), entries, existing }
+    return {
+      room,
+      floor,
+      assetType,
+      assetTypes: assetTypes.filter((a) => a.active),
+      entries,
+      existing,
+      inspectors,
+    }
   }, [roomId, assetTypeId, editId])
 
   // ---- form state -------------------------------------------------------
@@ -109,6 +149,7 @@ export default function EntryPage() {
   const [identifying, setIdentifying] = useState(false)
   const [aiSnapshot, setAiSnapshot] = useState<FormSnapshot | null>(null)
   const aiFileRef = useRef<HTMLInputElement>(null)
+  const [showHistory, setShowHistory] = useState(false)
 
   // Hydrate once the record is known; later live-query ticks must not stomp edits.
   useEffect(() => {
@@ -189,7 +230,7 @@ export default function EntryPage() {
   if (ctx === undefined) return <p className="text-sm text-slate-500">{t('common.loading')}</p>
   if (ctx === null) return <EmptyState title={t('common.empty')} />
 
-  const { room, floor, assetType, assetTypes, entries, existing } = ctx
+  const { room, floor, assetType, assetTypes, entries, existing, inspectors } = ctx
   const title = isUnlisted
     ? unlistedName || t('entry.addUnlisted')
     : assetName(lang, assetType?.name ?? '', assetType?.nameSw)
@@ -197,6 +238,30 @@ export default function EntryPage() {
   const detailsFilled = [material, colour, itemType, additionalFeatures, description, specificPosition].filter(
     (v) => v.trim().length > 0,
   ).length
+
+  // The markers describe the entry as it is stored, not the unsaved form: a field
+  // is flagged once a saved change to it has been recorded.
+  const history = existing?.editHistory ?? []
+  const editedFields = new Set(history.map((h) => h.field))
+  const whoById = new Map(inspectors.map((i) => [i.id, i.name]))
+
+  /** Chip for the bare label rows (quantity, condition, tags, photos). */
+  function editedBadge(field: string) {
+    if (!editedFields.has(field)) return null
+    return <EditedChip>{t('history.edited')}</EditedChip>
+  }
+
+  const fieldLabel = (field: string) =>
+    HISTORY_FIELD_KEY[field] ? t(HISTORY_FIELD_KEY[field]) : (EDIT_FIELD_LABEL[field] ?? field)
+
+  function valueLabel(field: string, value: string): string {
+    if (!value) return '—'
+    if (field === 'condition' && (CONDITIONS as string[]).includes(value)) {
+      return t(`condition.${value as Condition}`)
+    }
+    if (field === 'notPresent') return value === 'true' ? t('common.yes') : t('common.no')
+    return value
+  }
   const breakdownSum = CONDITIONS.reduce((n, c) => n + (breakdown[c] ?? 0), 0)
   const breakdownOk = !splitCondition || breakdownIsValid(breakdown, quantity)
 
@@ -488,7 +553,10 @@ export default function EntryPage() {
 
       <Card className="space-y-4 p-4">
         <div className="flex items-center justify-between gap-3">
-          <span className="field-label mb-0">{t('entry.quantity')}</span>
+          <span className="flex items-center gap-1.5">
+            <span className="field-label mb-0">{t('entry.quantity')}</span>
+            {editedBadge('quantity')}
+          </span>
           <button
             type="button"
             onClick={() => setNotPresent((v) => !v)}
@@ -540,7 +608,10 @@ export default function EntryPage() {
       {!notPresent && (
         <>
           <Card className="space-y-3 p-4">
-            <span className="field-label mb-0">{t('entry.condition')}</span>
+            <span className="flex items-center gap-1.5">
+              <span className="field-label mb-0">{t('entry.condition')}</span>
+              {editedBadge('condition')}
+            </span>
             {quantity > 1 && (
               <Segmented
                 value={splitCondition ? 'split' : 'bulk'}
@@ -610,7 +681,11 @@ export default function EntryPage() {
           </Card>
 
           <Card className="space-y-3 p-4">
-            <Field label={t('entry.serial')} hint={t('entry.serialHint')}>
+            <Field
+              label={t('entry.serial')}
+              hint={t('entry.serialHint')}
+              edited={editedFields.has('serialNumbers') ? t('history.edited') : undefined}
+            >
               <div className="flex gap-2">
                 <TextInput
                   value={serials[0] ?? ''}
@@ -673,10 +748,10 @@ export default function EntryPage() {
             )}
 
             <div className="grid grid-cols-2 gap-3">
-              <Field label={t('entry.brand')}>
+              <Field label={t('entry.brand')} edited={editedFields.has('brand') ? t('history.edited') : undefined}>
                 <TextInput value={brand} onChange={(e) => setBrand(e.target.value)} />
               </Field>
-              <Field label={t('entry.model')}>
+              <Field label={t('entry.model')} edited={editedFields.has('model') ? t('history.edited') : undefined}>
                 <TextInput value={model} onChange={(e) => setModel(e.target.value)} />
               </Field>
             </div>
@@ -684,7 +759,10 @@ export default function EntryPage() {
 
           <Card className="space-y-3 p-4">
             <div className="flex items-center justify-between gap-2">
-              <span className="field-label mb-0">{t('entry.tag')}</span>
+              <span className="flex items-center gap-1.5">
+                <span className="field-label mb-0">{t('entry.tag')}</span>
+                {editedBadge('tagNumbers')}
+              </span>
               <button
                 type="button"
                 onClick={() => setManualTags((v) => !v)}
@@ -728,7 +806,10 @@ export default function EntryPage() {
           </Card>
 
           <Card className="space-y-3 p-4">
-            <span className="field-label mb-0">{t('entry.photo')}</span>
+            <span className="flex items-center gap-1.5">
+              <span className="field-label mb-0">{t('entry.photo')}</span>
+              {editedBadge('photos')}
+            </span>
             <div className="flex flex-wrap gap-2">
               {previews.map((p) => (
                 <div key={p.id} className="relative">
@@ -838,25 +919,49 @@ export default function EntryPage() {
 
             {showDetails && (
               <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
-                <Field label={t('entry.itemType')} hint={t('entry.itemTypeHint')}>
+                <Field
+                  label={t('entry.itemType')}
+                  hint={t('entry.itemTypeHint')}
+                  edited={editedFields.has('itemType') ? t('history.edited') : undefined}
+                >
                   <TextInput value={itemType} onChange={(e) => setItemType(e.target.value)} />
                 </Field>
-                <Field label={t('entry.material')} hint={t('entry.materialHint')}>
+                <Field
+                  label={t('entry.material')}
+                  hint={t('entry.materialHint')}
+                  edited={editedFields.has('material') ? t('history.edited') : undefined}
+                >
                   <TextInput value={material} onChange={(e) => setMaterial(e.target.value)} />
                 </Field>
-                <Field label={t('entry.colour')} hint={t('entry.colourHint')}>
+                <Field
+                  label={t('entry.colour')}
+                  hint={t('entry.colourHint')}
+                  edited={editedFields.has('colour') ? t('history.edited') : undefined}
+                >
                   <TextInput value={colour} onChange={(e) => setColour(e.target.value)} />
                 </Field>
-                <Field label={t('entry.additionalFeatures')} hint={t('entry.additionalFeaturesHint')}>
+                <Field
+                  label={t('entry.additionalFeatures')}
+                  hint={t('entry.additionalFeaturesHint')}
+                  edited={editedFields.has('additionalFeatures') ? t('history.edited') : undefined}
+                >
                   <TextInput
                     value={additionalFeatures}
                     onChange={(e) => setAdditionalFeatures(e.target.value)}
                   />
                 </Field>
-                <Field label={t('entry.specificPosition')} hint={t('entry.specificPositionHint')}>
+                <Field
+                  label={t('entry.specificPosition')}
+                  hint={t('entry.specificPositionHint')}
+                  edited={editedFields.has('specificPosition') ? t('history.edited') : undefined}
+                >
                   <TextInput value={specificPosition} onChange={(e) => setSpecificPosition(e.target.value)} />
                 </Field>
-                <Field label={t('entry.description')} hint={t('entry.descriptionHint')}>
+                <Field
+                  label={t('entry.description')}
+                  hint={t('entry.descriptionHint')}
+                  edited={editedFields.has('description') ? t('history.edited') : undefined}
+                >
                   <TextArea value={description} onChange={(e) => setDescription(e.target.value)} />
                 </Field>
               </div>
@@ -866,10 +971,57 @@ export default function EntryPage() {
       )}
 
       <Card className="p-4">
-        <Field label={t('entry.remarks')} hint={t('common.optional')}>
+        <Field
+          label={t('entry.remarks')}
+          hint={t('common.optional')}
+          edited={editedFields.has('remarks') ? t('history.edited') : undefined}
+        >
           <TextArea value={remarks} onChange={(e) => setRemarks(e.target.value)} />
         </Field>
       </Card>
+
+      {history.length > 0 && (
+        <Card className="p-4">
+          <button
+            type="button"
+            onClick={() => setShowHistory((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 text-left"
+            aria-expanded={showHistory}
+          >
+            <span>
+              <span className="block text-sm font-bold text-slate-800">{t('history.title')}</span>
+              <span className="block text-xs text-slate-500">{t('history.count', { n: history.length })}</span>
+            </span>
+            <svg
+              viewBox="0 0 24 24"
+              className={`h-5 w-5 shrink-0 text-slate-400 transition ${showHistory ? 'rotate-90' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+
+          {showHistory && (
+            <ol className="mt-3 space-y-3 border-t border-slate-100 pt-3">
+              {[...history].reverse().map((h, i) => (
+                <li key={`${h.editedAt}-${h.field}-${i}`} className="text-xs">
+                  <p className="font-bold text-slate-700">{fieldLabel(h.field)}</p>
+                  <p className="mt-0.5 text-slate-600">
+                    <span className="text-slate-400 line-through">{valueLabel(h.field, h.oldValue)}</span>
+                    <span aria-hidden="true"> → </span>
+                    <span className="font-semibold text-slate-900">{valueLabel(h.field, h.newValue)}</span>
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-400">
+                    {whoById.get(h.editedBy) ?? t('common.inspector')} · {fmtWhen(h.editedAt)}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </Card>
+      )}
 
       {error && (
         <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{t(error)}</p>

@@ -76,6 +76,23 @@ export interface Inspector {
   syncStatus: SyncStatus
 }
 
+/**
+ * One field-level change to an entry that was already saved.
+ *
+ * Values are stored as the strings the data model holds — a condition is `"G"`,
+ * a quantity `"3"` — not as display text, so the log can be rendered in either
+ * language and in the English reports from the same record.
+ */
+export interface EditRecord {
+  /** Canonical field key, e.g. "quantity", "material". */
+  field: string
+  oldValue: string
+  newValue: string
+  /** Inspector id of whoever made the change. */
+  editedBy: string
+  editedAt: number
+}
+
 /** Counts per condition; used when quantity > 1 and items differ. */
 export type ConditionBreakdown = Partial<Record<Condition, number>>
 
@@ -110,6 +127,13 @@ export interface InspectionEntry {
   specificPosition: string
   /** Set when the fields were pre-filled by photo recognition and not yet edited. */
   aiAssisted?: boolean
+
+  /**
+   * Field-level change log, oldest first. Entries created before schema v3 are
+   * backfilled with an empty array by the migration; readers still default to
+   * `[]` so a record pulled from a client that predates v3 cannot crash a report.
+   */
+  editHistory: EditRecord[]
 
   inspectorId: string
   inspectedAt: number

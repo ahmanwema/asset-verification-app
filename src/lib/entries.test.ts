@@ -1,7 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { db } from '../db/db'
 import { resetDb, seedFixture, type Fixture } from '../test/fixtures'
-import { ValidationError, deleteEntry, markNotPresent, reopenRoom, resolveConflict, saveEntry, signoffRoom } from './entries'
+import {
+  EDIT_HISTORY_LIMIT,
+  ValidationError,
+  deleteEntry,
+  markNotPresent,
+  reopenRoom,
+  resolveConflict,
+  saveEntry,
+  signoffRoom,
+} from './entries'
 import { breakdownIsValid, entryConditionCounts, loadExerciseStats, loadFloorProgress } from './queries'
 
 let fx: Fixture
@@ -214,6 +223,97 @@ describe('progress and stats', () => {
     await deleteEntry(entry.id)
     const stats = await loadExerciseStats(fx.exercise.id)
     expect(stats.itemsFound).toBe(0)
+  })
+})
+
+describe('edit history', () => {
+  it('starts empty on a first save - creating an entry is not an edit', async () => {
+    const entry = await saveEntry(draft({ quantity: 4 }))
+    expect(entry.editHistory).toEqual([])
+  })
+
+  it('records each changed field with who changed it and when', async () => {
+    const before = Date.now()
+    const entry = await saveEntry(draft({ quantity: 4, brand: 'Furnico' }))
+    await saveEntry(
+      draft({ id: entry.id, quantity: 6, brand: 'Dodoma Furniture', condition: 'F', inspectorId: fx.inspector2.id }),
+    )
+
+    const row = await db.entries.get(entry.id)
+    const byField = new Map((row?.editHistory ?? []).map((h) => [h.field, h]))
+
+    expect(byField.get('quantity')).toMatchObject({ oldValue: '4', newValue: '6' })
+    expect(byField.get('brand')).toMatchObject({ oldValue: 'Furnico', newValue: 'Dodoma Furniture' })
+    expect(byField.get('condition')).toMatchObject({ oldValue: 'G', newValue: 'F' })
+    // Tags are reallocated by the quantity change, and that is logged too: the
+    // old tag numbers may already be stuck on the furniture.
+    expect(byField.get('tagNumbers')?.newValue).toContain('SC-1F-P3-006')
+
+    for (const h of row?.editHistory ?? []) {
+      expect(h.editedBy).toBe(fx.inspector2.id)
+      expect(h.editedAt).toBeGreaterThanOrEqual(before)
+    }
+  })
+
+  it('logs the detail fields, including going from blank to filled', async () => {
+    const entry = await saveEntry(draft())
+    await saveEntry(draft({ id: entry.id, material: 'Plywood', colour: 'Grey', specificPosition: 'By the door' }))
+
+    const row = await db.entries.get(entry.id)
+    const fields = (row?.editHistory ?? []).map((h) => h.field)
+    expect(fields).toEqual(expect.arrayContaining(['material', 'colour', 'specificPosition']))
+    expect(row?.editHistory.find((h) => h.field === 'material')).toMatchObject({
+      oldValue: '',
+      newValue: 'Plywood',
+    })
+  })
+
+  it('writes nothing when a re-save changes none of the tracked fields', async () => {
+    const entry = await saveEntry(draft({ quantity: 2, remarks: 'Fine' }))
+    await saveEntry(draft({ id: entry.id, quantity: 2, remarks: 'Fine' }))
+
+    const row = await db.entries.get(entry.id)
+    expect(row?.editHistory).toEqual([])
+  })
+
+  it('accumulates across edits and keeps the newest records once capped', async () => {
+    let entry = await saveEntry(draft({ remarks: 'r0' }))
+    for (let i = 1; i <= 3; i += 1) {
+      entry = await saveEntry(draft({ id: entry.id, remarks: `r${i}` }))
+    }
+    expect(entry.editHistory).toHaveLength(3)
+    expect(entry.editHistory.map((h) => h.newValue)).toEqual(['r1', 'r2', 'r3'])
+
+    // An entry already edited past the cap must shed its oldest records, not grow.
+    const stuffed = Array.from({ length: EDIT_HISTORY_LIMIT }, (_, i) => ({
+      field: 'remarks',
+      oldValue: `old${i}`,
+      newValue: `new${i}`,
+      editedBy: fx.inspector.id,
+      editedAt: 1,
+    }))
+    await db.entries.put({ ...entry, editHistory: stuffed })
+    const capped = await saveEntry(draft({ id: entry.id, remarks: 'final' }))
+
+    expect(capped.editHistory).toHaveLength(EDIT_HISTORY_LIMIT)
+    expect(capped.editHistory[0].newValue).toBe('new1') // the oldest record was dropped
+    expect(capped.editHistory.at(-1)).toMatchObject({ oldValue: 'r3', newValue: 'final' })
+  })
+
+  it('logs the switch to not present', async () => {
+    const entry = await saveEntry(draft({ quantity: 3 }))
+    await markNotPresent({
+      exerciseId: fx.exercise.id,
+      room: fx.room,
+      floor: fx.floor,
+      assetType: fx.chair,
+      inspectorId: fx.inspector.id,
+    })
+
+    const row = await db.entries.get(entry.id)
+    const byField = new Map((row?.editHistory ?? []).map((h) => [h.field, h]))
+    expect(byField.get('notPresent')).toMatchObject({ oldValue: 'false', newValue: 'true' })
+    expect(byField.get('quantity')).toMatchObject({ oldValue: '3', newValue: '0' })
   })
 })
 

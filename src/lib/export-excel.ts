@@ -1,5 +1,6 @@
 import type * as XLSXTypes from 'xlsx'
 import { db } from '../db/db'
+import { EDIT_FIELD_LABEL } from './entries'
 import { entryConditionCounts } from './queries'
 import type { Condition, InspectionEntry } from '../types'
 import { CONDITIONS } from '../types'
@@ -14,7 +15,7 @@ const CONDITION_LABEL: Record<Condition, string> = {
 /** Unserviceable first — that is the order a maintenance team acts on. */
 const CONDITION_PRIORITY: Record<Condition, number> = { U: 1, P: 2, F: 3, G: 4 }
 
-export type ReportKind = 'register' | 'rooms' | 'condition' | 'variance' | 'tags'
+export type ReportKind = 'register' | 'rooms' | 'condition' | 'variance' | 'tags' | 'editlog'
 
 export interface ReportBundle {
   meta: {
@@ -33,6 +34,7 @@ export interface ReportBundle {
   condition: Array<Record<string, string | number>>
   variance: Array<Record<string, string | number>>
   tags: Array<Record<string, string | number>>
+  editLog: Array<Record<string, string | number>>
 }
 
 function fmtDate(ts: number): string {
@@ -40,6 +42,17 @@ function fmtDate(ts: number): string {
   const d = new Date(ts)
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/**
+ * The edit log stores raw model values ("G", "true") so it can be shown in either
+ * language; the spreadsheet is English, so they are expanded here.
+ */
+function logValue(field: string, value: string): string {
+  if (!value) return ''
+  if (field === 'condition') return CONDITION_LABEL[value as Condition] ?? value
+  if (field === 'notPresent') return value === 'true' ? 'Yes' : 'No'
+  return value
 }
 
 function conditionSummary(entry: InspectionEntry): string {
@@ -282,6 +295,32 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
   }
   tags.sort((a, b) => String(a['Tag Number']).localeCompare(String(b['Tag Number'])))
 
+  // --- Edit log: every field changed after an item was first recorded --------
+  const editRows: Array<{ ts: number; row: Record<string, string | number> }> = []
+  for (const e of sorted) {
+    const loc = locationOf(e.roomId)
+    for (const h of e.editHistory ?? []) {
+      editRows.push({
+        ts: h.editedAt,
+        row: {
+          'Edited At': fmtDate(h.editedAt),
+          'Edited By': whoById.get(h.editedBy)?.name ?? '',
+          Field: EDIT_FIELD_LABEL[h.field] ?? h.field,
+          'Old Value': logValue(h.field, h.oldValue),
+          'New Value': logValue(h.field, h.newValue),
+          Item: nameOf(e),
+          Floor: loc.floorName,
+          Room: loc.roomName,
+          'Tag Numbers': e.tagNumbers.join(', '),
+          'Serial Numbers': e.serialNumbers.join(', '),
+        },
+      })
+    }
+  }
+  // Newest first, sorted on the raw timestamp so same-minute edits keep their order.
+  editRows.sort((a, b) => b.ts - a.ts)
+  const editLog = editRows.map((r) => r.row)
+
   const conditionTotals = entries.reduce(
     (acc, e) => {
       const counts = entryConditionCounts(e)
@@ -312,6 +351,8 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
     { Metric: 'Unserviceable', Value: conditionTotals.U },
     { Metric: 'Expected but not found', Value: entries.filter((e) => e.notPresent).length },
     { Metric: 'Unlisted items found', Value: entries.filter((e) => e.isUnlistedItem).length },
+    { Metric: 'Entries pre-filled by photo recognition', Value: entries.filter((e) => e.aiAssisted).length },
+    { Metric: 'Field changes logged', Value: editLog.length },
   ]
 
   return {
@@ -331,6 +372,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
     condition,
     variance,
     tags,
+    editLog,
   }
 }
 
@@ -370,6 +412,7 @@ const SHEETS: Record<ReportKind, { name: string; suffix: string }> = {
   condition: { name: 'Condition Report', suffix: 'Condition-Report' },
   variance: { name: 'Variance Report', suffix: 'Variance-Report' },
   tags: { name: 'Tag Register', suffix: 'Tag-Register' },
+  editlog: { name: 'Edit Log', suffix: 'Edit-Log' },
 }
 
 /** Downloads a single report as its own workbook. */
@@ -387,9 +430,12 @@ export async function exportReport(exerciseId: string, kind: ReportKind): Promis
           ? bundle.condition
           : kind === 'variance'
             ? bundle.variance
-            : bundle.tags
+            : kind === 'tags'
+              ? bundle.tags
+              : bundle.editLog
 
-  XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, rows, 'Nothing recorded yet'), SHEETS[kind].name)
+  const placeholder = kind === 'editlog' ? 'No edits recorded' : 'Nothing recorded yet'
+  XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, rows, placeholder), SHEETS[kind].name)
   if (kind === 'rooms') {
     XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.roomTotals, 'No rooms'), 'Room Totals')
   }
@@ -408,6 +454,7 @@ export async function exportFullWorkbook(exerciseId: string): Promise<number> {
   XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.condition, 'No items need attention'), 'Condition Report')
   XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.variance, 'No variances'), 'Variance Report')
   XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.tags, 'No tags issued'), 'Tag Register')
+  XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.editLog, 'No edits recorded'), 'Edit Log')
   XLSX.writeFile(wb, fileName(bundle, 'Verification-Workbook'))
   return bundle.register.length
 }
