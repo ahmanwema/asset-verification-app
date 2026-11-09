@@ -38,6 +38,8 @@ let base
 
 beforeAll(async () => {
   process.env.OPENAI_API_KEY = '' // no key: recognition reports itself as off
+  process.env.ADMIN_EMAIL = 'admin@sufa.ac.tz'
+  process.env.ADMIN_PASSWORD = 'verify123' // without this no admin is seeded at all
   pg = new PGlite()
   await pg.waitReady
   store = createStore((text, params) => pg.query(text, params))
@@ -178,7 +180,9 @@ describe('photo route', () => {
     expect(up.status).toBe(200)
     expect((await up.json()).url).toBe('/api/photos/ph_1')
 
-    const down = await fetch(`${base}/api/photos/ph_1`)
+    const down = await fetch(`${base}/api/photos/ph_1`, {
+      headers: { Authorization: `Bearer ${await token()}` },
+    })
     expect(down.status).toBe(200)
     expect(down.headers.get('content-type')).toBe('image/jpeg')
     expect(down.headers.get('cache-control')).toContain('immutable')
@@ -194,7 +198,14 @@ describe('photo route', () => {
   })
 
   it('404s a photo that does not exist', async () => {
-    expect((await fetch(`${base}/api/photos/ph_missing`)).status).toBe(404)
+    const res = await fetch(`${base}/api/photos/ph_missing`, {
+      headers: { Authorization: `Bearer ${await token()}` },
+    })
+    expect(res.status).toBe(404)
+  })
+
+  it('refuses a download without a token, now that one database holds many schools', async () => {
+    expect((await fetch(`${base}/api/photos/ph_1`)).status).toBe(401)
   })
 
   it('rejects an unsupported method', async () => {
@@ -231,6 +242,16 @@ describe('health route', () => {
   it('reports ok with per-table counts', async () => {
     const res = await fetch(`${base}/api/health`)
     expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.ok).toBe(true)
+    // Record counts belong to an institution, so an anonymous probe gets none.
+    expect(body.records).toBeUndefined()
+  })
+
+  it('includes the caller own record counts when a token is sent', async () => {
+    const res = await fetch(`${base}/api/health`, {
+      headers: { Authorization: `Bearer ${await token()}` },
+    })
     const body = await res.json()
     expect(body.ok).toBe(true)
     expect(Array.isArray(body.records)).toBe(true)

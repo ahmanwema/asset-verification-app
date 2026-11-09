@@ -44,6 +44,10 @@ export function newToken() {
   return crypto.randomBytes(32).toString('hex')
 }
 
+export function newId(prefix = '') {
+  return `${prefix}${crypto.randomUUID()}`
+}
+
 export function newUserId() {
-  return `usr_${crypto.randomUUID()}`
+  return newId('usr_')
 }

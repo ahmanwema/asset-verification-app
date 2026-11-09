@@ -25,12 +25,17 @@ export default withErrors(async (req, res) => {
     const user = await authenticate(store, bearerToken(req))
     if (!user) return sendJson(res, 401, { error: 'unauthorized' })
 
-    const { status, body } = await handlePhotoUpload(store, id, await readJson(req))
+    const { status, body } = await handlePhotoUpload(store, user.orgId, id, await readJson(req))
     return sendJson(res, status, body)
   }
 
   if (req.method === 'GET') {
-    const photo = await store.getPhoto(id)
+    // Downloads need a token too, now that one database holds several
+    // institutions: a random id is not an access control.
+    const user = await authenticate(store, bearerToken(req))
+    if (!user) return sendJson(res, 401, { error: 'unauthorized' })
+
+    const photo = await store.getPhoto(user.orgId, id)
     if (!photo) return sendJson(res, 404, { error: 'not-found' })
     // Immutable: a photo id is minted per capture and its bytes never change.
     return sendBytes(res, 200, photo.contentType, photo.bytes, 'public, max-age=604800, immutable')
