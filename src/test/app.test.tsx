@@ -668,3 +668,93 @@ describe('moving between items in a room', () => {
     expect(screen.queryByDisplayValue('9')).toBeNull()
   })
 })
+
+describe('identifying a photo that was not just taken', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const photo = () => new File([new Uint8Array([1, 2, 3])], 'chair.jpg', { type: 'image/jpeg' })
+
+  function stubVision() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              model: 'gpt-5.4-mini',
+              result: {
+                assetTypeCode: 'SC',
+                itemName: 'Student Chair',
+                itemType: 'Folding chair',
+                quantity: 2,
+                condition: 'F',
+                material: 'Plastic seat with metal frame',
+                colour: 'Black',
+                brand: '',
+                model: '',
+                serialNumber: '',
+                additionalFeatures: '',
+                description: 'A black folding chair',
+                specificPosition: '',
+                remarks: '',
+                confidence: 0.8,
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
+    )
+  }
+
+  async function openChairForm() {
+    await signIn()
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+  }
+
+  it('offers an upload route as well as the camera', async () => {
+    await openChairForm()
+    // A desktop has no camera, so a gallery/file route must exist for both
+    // plain attaching and identification.
+    expect(await screen.findByText('Upload')).toBeTruthy()
+    expect(screen.getByText('Choose a photo & identify')).toBeTruthy()
+  })
+
+  it('identifies an uploaded photo and fills the form', async () => {
+    await setMeta('syncToken', 'test-token')
+    stubVision()
+    await openChairForm()
+
+    const button = (await screen.findByText('Choose a photo & identify')).closest('button') as HTMLElement
+    fireEvent.change(button.nextElementSibling as HTMLInputElement, { target: { files: [photo()] } })
+
+    expect(await screen.findByDisplayValue('Plastic seat with metal frame')).toBeTruthy()
+    expect(screen.getByDisplayValue('Folding chair')).toBeTruthy()
+    expect(screen.getByDisplayValue('2')).toBeTruthy()
+  })
+
+  it('can re-read a photo that is already attached', async () => {
+    await setMeta('syncToken', 'test-token')
+    await openChairForm()
+
+    // Attach without identifying, the way an inspector working offline would.
+    // The plain upload input is the one that takes several files and does not
+    // force the camera.
+    await screen.findByText('Upload')
+    const uploadInput = Array.from(document.querySelectorAll('input[type="file"]')).find(
+      (i) => i.hasAttribute('multiple') && !i.hasAttribute('capture'),
+    ) as HTMLInputElement
+    fireEvent.change(uploadInput, { target: { files: [photo()] } })
+
+    // Only now is there a connection and a reason to ask.
+    stubVision()
+    fireEvent.click(await screen.findByText('Identify'))
+
+    expect(await screen.findByDisplayValue('A black folding chair')).toBeTruthy()
+    // The photo was not attached a second time.
+    expect(screen.getAllByText('Identify')).toHaveLength(1)
+  })
+})

@@ -157,6 +157,8 @@ export default function EntryPage() {
   const [identifying, setIdentifying] = useState(false)
   const [aiSnapshot, setAiSnapshot] = useState<FormSnapshot | null>(null)
   const aiFileRef = useRef<HTMLInputElement>(null)
+  const aiUploadRef = useRef<HTMLInputElement>(null)
+  const uploadRef = useRef<HTMLInputElement>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [moveTo, setMoveTo] = useState('')
 
@@ -353,6 +355,63 @@ export default function EntryPage() {
    * the call fails), then pre-fill the form from the model's reading of it.
    * Nothing is saved here — the inspector still reviews and taps Save.
    */
+  /**
+   * Fills the form from one image. Shared by the camera, an uploaded file and
+   * a photo already attached — the inspector may have shot it before the
+   * catalog existed, or on a laptop with no camera at all.
+   */
+  async function runIdentify(blob: Blob) {
+    if (!ctx?.room) return
+    const outcome = await identifyPhoto(blob, {
+      roomId: ctx.room.id,
+      expectedAssetName: isUnlisted ? undefined : ctx.assetType?.name,
+    })
+
+    if (!outcome.ok) {
+      const messages: Record<string, StringKey> = {
+        offline: 'ai.offline',
+        'not-connected': 'ai.notConnected',
+        'vision-not-configured': 'ai.notConfigured',
+      }
+      flash(t(messages[outcome.error] ?? 'ai.failed'))
+      return
+    }
+
+    const snapshot = currentSnapshot()
+    const r = outcome.result
+    let filled = 0
+    const fill = (value: string, setter: (v: string) => void) => {
+      if (!value) return
+      setter(value)
+      filled += 1
+    }
+
+    if (!notPresent && r.quantity > 0 && r.quantity !== quantity) {
+      setQuantity(r.quantity)
+      filled += 1
+    }
+    setCondition(r.condition)
+    filled += 1
+
+    fill(r.serialNumber, (v) => setSerials((prev) => [v, ...prev.slice(1)]))
+    fill(r.brand, setBrand)
+    fill(r.model, setModel)
+    fill(r.itemType, setItemType)
+    fill(r.material, setMaterial)
+    fill(r.colour, setColour)
+    fill(r.additionalFeatures, setAdditionalFeatures)
+    fill(r.description, setDescription)
+    fill(r.specificPosition, setSpecificPosition)
+    fill(r.remarks, setRemarks)
+    if (isUnlisted) fill(r.itemName, setUnlistedName)
+
+    setAiSnapshot(snapshot)
+    setAiAssisted(true)
+    setShowDetails(true)
+    flash(t('ai.filled', { n: filled }))
+  }
+
+  /** Camera or file picker, then identify. The photo is attached either way. */
   async function onIdentifyPhoto(files: FileList | null) {
     const file = files?.[0]
     if (!file || !ctx?.room) return
@@ -360,61 +419,31 @@ export default function EntryPage() {
     setIdentifying(true)
     setError(null)
     try {
+      // Attached first, so the evidence survives a failed or slow call.
       const { blob, width, height } = await compressImage(file)
       setPhotos((prev) => [...prev, { id: uid('ph_'), blob, width, height, persisted: false }])
-
-      const outcome = await identifyPhoto(blob, {
-        roomId: ctx.room.id,
-        expectedAssetName: isUnlisted ? undefined : ctx.assetType?.name,
-      })
-
-      if (!outcome.ok) {
-        const messages: Record<string, StringKey> = {
-          offline: 'ai.offline',
-          'not-connected': 'ai.notConnected',
-          'vision-not-configured': 'ai.notConfigured',
-        }
-        flash(t(messages[outcome.error] ?? 'ai.failed'))
-        return
-      }
-
-      const snapshot = currentSnapshot()
-      const r = outcome.result
-      let filled = 0
-      const fill = (value: string, setter: (v: string) => void) => {
-        if (!value) return
-        setter(value)
-        filled += 1
-      }
-
-      if (!notPresent && r.quantity > 0 && r.quantity !== quantity) {
-        setQuantity(r.quantity)
-        filled += 1
-      }
-      setCondition(r.condition)
-      filled += 1
-
-      fill(r.serialNumber, (v) => setSerials((prev) => [v, ...prev.slice(1)]))
-      fill(r.brand, setBrand)
-      fill(r.model, setModel)
-      fill(r.itemType, setItemType)
-      fill(r.material, setMaterial)
-      fill(r.colour, setColour)
-      fill(r.additionalFeatures, setAdditionalFeatures)
-      fill(r.description, setDescription)
-      fill(r.specificPosition, setSpecificPosition)
-      fill(r.remarks, setRemarks)
-      if (isUnlisted) fill(r.itemName, setUnlistedName)
-
-      setAiSnapshot(snapshot)
-      setAiAssisted(true)
-      setShowDetails(true)
-      flash(t('ai.filled', { n: filled }))
+      await runIdentify(blob)
     } catch {
       flash(t('ai.failed'))
     } finally {
       setIdentifying(false)
       if (aiFileRef.current) aiFileRef.current.value = ''
+      if (aiUploadRef.current) aiUploadRef.current.value = ''
+    }
+  }
+
+  /** Identify a photo that is already on the entry; nothing is attached again. */
+  async function identifyAttached(photoId: string) {
+    const photo = photos.find((p) => p.id === photoId)
+    if (!photo) return
+    setIdentifying(true)
+    setError(null)
+    try {
+      await runIdentify(photo.blob)
+    } catch {
+      flash(t('ai.failed'))
+    } finally {
+      setIdentifying(false)
     }
   }
 
@@ -826,6 +855,17 @@ export default function EntryPage() {
                   >
                     ×
                   </button>
+                  {/* Any attached photo can be read, not only one just taken:
+                      it may have been shot before the catalog existed, or
+                      uploaded from a laptop with no camera. */}
+                  <button
+                    type="button"
+                    disabled={identifying || busy}
+                    onClick={() => void identifyAttached(p.id)}
+                    className="absolute inset-x-0 bottom-0 rounded-b-xl bg-slate-900/70 py-0.5 text-[10px] font-bold text-white disabled:opacity-50"
+                  >
+                    {t('ai.identifyThis')}
+                  </button>
                 </div>
               ))}
               <button
@@ -839,12 +879,33 @@ export default function EntryPage() {
                 </svg>
                 {t('entry.takePhoto')}
               </button>
+              <button
+                type="button"
+                onClick={() => uploadRef.current?.click()}
+                className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-slate-300 text-[10px] font-semibold text-slate-500"
+              >
+                <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 16V4m0 0L8 8m4-4l4 4" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3" strokeLinecap="round" />
+                </svg>
+                {t('entry.uploadPhoto')}
+              </button>
             </div>
             <input
               ref={fileRef}
               type="file"
               accept="image/*"
               capture="environment"
+              multiple
+              className="hidden"
+              onChange={(e) => void onPickPhotos(e.target.files)}
+            />
+            {/* No `capture`, so this opens the gallery or the file picker
+                rather than the camera — the only route on a desktop. */}
+            <input
+              ref={uploadRef}
+              type="file"
+              accept="image/*"
               multiple
               className="hidden"
               onChange={(e) => void onPickPhotos(e.target.files)}
@@ -868,6 +929,23 @@ export default function EntryPage() {
               type="file"
               accept="image/*"
               capture="environment"
+              className="hidden"
+              onChange={(e) => void onIdentifyPhoto(e.target.files)}
+            />
+
+            <Button
+              type="button"
+              variant="secondary"
+              full
+              disabled={identifying || busy}
+              onClick={() => aiUploadRef.current?.click()}
+            >
+              {t('ai.uploadAndIdentify')}
+            </Button>
+            <input
+              ref={aiUploadRef}
+              type="file"
+              accept="image/*"
               className="hidden"
               onChange={(e) => void onIdentifyPhoto(e.target.files)}
             />

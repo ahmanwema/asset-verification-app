@@ -83,6 +83,7 @@ export const en = {
   'entry.split': 'Split by condition',
   'entry.breakdownError': 'Condition counts must add up to the quantity',
   'entry.takePhoto': 'Take photo',
+  'entry.uploadPhoto': 'Upload',
   'entry.removePhoto': 'Remove photo',
   'entry.saved': 'Saved',
   'entry.quantityRequired': 'Enter a quantity of 1 or more, or mark the item not present',
@@ -177,6 +178,8 @@ export const en = {
   'history.edited': 'edited',
 
   'ai.capture': 'Capture & identify',
+  'ai.uploadAndIdentify': 'Choose a photo & identify',
+  'ai.identifyThis': 'Identify',
   'ai.identifying': 'Identifying…',
   'ai.filled': 'AI filled {n} fields — check each one before saving',
   'ai.undo': 'Undo AI fill',
@@ -392,6 +395,7 @@ export const sw: Record<StringKey, string> = {
   'entry.split': 'Gawanya kwa hali',
   'entry.breakdownError': 'Idadi za hali hazilingani na idadi yote',
   'entry.takePhoto': 'Piga picha',
+  'entry.uploadPhoto': 'Pakia',
   'entry.removePhoto': 'Ondoa picha',
   'entry.saved': 'Imehifadhiwa',
   'entry.quantityRequired': 'Weka idadi ya 1 au zaidi, au weka alama kuwa haipo',
@@ -486,6 +490,8 @@ export const sw: Record<StringKey, string> = {
   'history.edited': 'imebadilishwa',
 
   'ai.capture': 'Piga picha na tambua',
+  'ai.uploadAndIdentify': 'Chagua picha na tambua',
+  'ai.identifyThis': 'Tambua',
   'ai.identifying': 'Inatambua…',
   'ai.filled': 'AI imejaza sehemu {n} — hakiki kila moja kabla ya kuhifadhi',
   'ai.undo': 'Tengua ujazaji wa AI',
