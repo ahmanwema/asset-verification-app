@@ -9,6 +9,7 @@ export interface LabelData {
   floor: string
   room: string
   serial: string
+  photoCount: number
   /** The entry this tag belongs to, so its photos can be shown before printing. */
   entryId: string
   condition: Condition
@@ -48,7 +49,7 @@ export async function collectLabels(opts: {
     return true
   })
 
-  const labels: LabelData[] = []
+  const labels: Array<LabelData & { floorOrder: number; roomOrder: number }> = []
   for (const e of inScope) {
     const room = roomById.get(e.roomId)
     const floor = room ? floorById.get(room.floorId) : undefined
@@ -62,18 +63,26 @@ export async function collectLabels(opts: {
         floor: floor?.name ?? '',
         room: room?.name ?? '',
         serial: e.serialNumbers[i] ?? '',
+        photoCount: e.photoIds.length,
         entryId: e.id,
         condition: e.condition,
+        floorOrder: floor?.sortOrder ?? Number.MAX_SAFE_INTEGER,
+        roomOrder: room?.sortOrder ?? Number.MAX_SAFE_INTEGER,
       })
     })
   }
 
-  labels.sort((a, b) => a.tag.localeCompare(b.tag))
+  labels.sort(
+    (a, b) =>
+      a.floorOrder - b.floorOrder ||
+      a.roomOrder - b.roomOrder ||
+      a.tag.localeCompare(b.tag),
+  )
 
   return {
     organization: org?.name ?? '',
     verifiedOn: exercise?.date ?? new Date().toISOString().slice(0, 10),
-    labels,
+    labels: labels.map(({ floorOrder: _floorOrder, roomOrder: _roomOrder, ...label }) => label),
   }
 }
 

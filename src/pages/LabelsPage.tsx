@@ -1,12 +1,28 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
-import { collectLabels, printLabels, qrDataUrl, type LabelData, type LabelScope } from '../lib/labels'
+import { collectLabels, printLabels, type LabelData, type LabelScope } from '../lib/labels'
 import { photoBlob } from '../lib/photos'
 import { ensureEntryPhotos } from '../lib/sync'
 import { useSession } from '../state/session'
 import { useT } from '../i18n'
-import { Button, CONDITION_STYLE, Card, EmptyState, Field, SectionTitle, Select, Sheet, Toast } from '../components/ui'
+import { CONDITIONS, type Condition } from '../types'
+import {
+  Button,
+  CONDITION_STYLE,
+  Card,
+  EmptyState,
+  Field,
+  SectionTitle,
+  Select,
+  Sheet,
+  TextInput,
+  Toast,
+} from '../components/ui'
+
+type PhotoFilter = 'all' | 'with' | 'without'
+
+const MAX_VISIBLE = 200
 
 export default function LabelsPage() {
   const t = useT()
@@ -14,9 +30,11 @@ export default function LabelsPage() {
   const [scope, setScope] = useState<LabelScope>('exercise')
   const [floorId, setFloorId] = useState('')
   const [roomId, setRoomId] = useState('')
+  const [query, setQuery] = useState('')
+  const [condition, setCondition] = useState<Condition | ''>('')
+  const [photoFilter, setPhotoFilter] = useState<PhotoFilter>('all')
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
-  const [previewQr, setPreviewQr] = useState<string | null>(null)
   const [selected, setSelected] = useState<LabelData | null>(null)
 
   const floors = useLiveQuery(async () => {
@@ -28,7 +46,9 @@ export default function LabelsPage() {
 
   const rooms = useLiveQuery(async () => {
     if (!floorId) return []
-    return (await db.rooms.where('floorId').equals(floorId).toArray()).sort((a, b) => a.sortOrder - b.sortOrder)
+    return (await db.rooms.where('floorId').equals(floorId).toArray()).sort(
+      (a, b) => a.sortOrder - b.sortOrder,
+    )
   }, [floorId])
 
   const sheet = useLiveQuery(async () => {
@@ -36,30 +56,43 @@ export default function LabelsPage() {
     return collectLabels({ exerciseId: exercise.id, scope, roomId, floorId })
   }, [exercise?.id, scope, roomId, floorId])
 
-  const firstTag = sheet?.labels[0]?.tag
-  useEffect(() => {
-    if (!firstTag) {
-      setPreviewQr(null)
-      return
-    }
-    let cancelled = false
-    void qrDataUrl(firstTag, 200).then((url) => {
-      if (!cancelled) setPreviewQr(url)
+  const filteredLabels = useMemo(() => {
+    if (!sheet) return []
+    const q = query.trim().toLowerCase()
+    return sheet.labels.filter((label) => {
+      if (condition && label.condition !== condition) return false
+      if (photoFilter === 'with' && label.photoCount === 0) return false
+      if (photoFilter === 'without' && label.photoCount > 0) return false
+      if (!q) return true
+      return [label.tag, label.description, label.floor, label.room, label.serial].some((value) =>
+        value.toLowerCase().includes(q),
+      )
     })
-    return () => {
-      cancelled = true
+  }, [sheet, query, condition, photoFilter])
+
+  const visibleLabels = filteredLabels.slice(0, MAX_VISIBLE)
+  const groups = useMemo(() => {
+    const grouped = new Map<string, { floor: string; room: string; labels: LabelData[] }>()
+    for (const label of visibleLabels) {
+      const key = `${label.floor}\u0000${label.room}`
+      const group = grouped.get(key) ?? { floor: label.floor, room: label.room, labels: [] }
+      group.labels.push(label)
+      grouped.set(key, group)
     }
-  }, [firstTag])
+    return [...grouped.values()]
+  }, [visibleLabels])
+
+  const hasFilters = Boolean(query.trim() || condition || photoFilter !== 'all')
 
   if (!exercise) return <EmptyState title={t('common.empty')} />
 
   async function doPrint() {
-    if (!sheet || sheet.labels.length === 0) return
+    if (!sheet || filteredLabels.length === 0) return
     setBusy(true)
     try {
-      const ok = await printLabels(sheet)
+      const ok = await printLabels({ ...sheet, labels: filteredLabels })
       if (!ok) {
-        setToast('Allow pop-ups to print labels')
+        setToast(t('labels.allowPopups'))
         setTimeout(() => setToast(null), 2600)
       }
     } finally {
@@ -71,127 +104,185 @@ export default function LabelsPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-900">{t('labels.title')}</h1>
-        <p className="text-xs text-slate-500">{t('labels.count', { n: sheet?.labels.length ?? 0 })}</p>
+        <p className="text-xs text-slate-500">
+          {t('labels.showing', { shown: filteredLabels.length, total: sheet?.labels.length ?? 0 })}
+        </p>
       </div>
 
       <Card className="space-y-3 p-4">
-        <Field label={t('labels.scope')}>
-          <Select value={scope} onChange={(e) => setScope(e.target.value as LabelScope)}>
-            <option value="exercise">{t('labels.exercise')}</option>
-            <option value="floor">{t('labels.floor')}</option>
-            <option value="room">{t('labels.room')}</option>
-          </Select>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label={t('labels.scope')}>
+            <Select value={scope} onChange={(e) => setScope(e.target.value as LabelScope)}>
+              <option value="exercise">{t('labels.exercise')}</option>
+              <option value="floor">{t('labels.floor')}</option>
+              <option value="room">{t('labels.room')}</option>
+            </Select>
+          </Field>
+
+          {(scope === 'floor' || scope === 'room') && (
+            <Field label={t('common.floor')}>
+              <Select
+                value={floorId}
+                onChange={(e) => {
+                  setFloorId(e.target.value)
+                  setRoomId('')
+                }}
+              >
+                <option value="">—</option>
+                {floors?.map((floor) => (
+                  <option key={floor.id} value={floor.id}>
+                    {floor.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+
+          {scope === 'room' && (
+            <Field label={t('common.room')}>
+              <Select value={roomId} onChange={(e) => setRoomId(e.target.value)} disabled={!floorId}>
+                <option value="">—</option>
+                {rooms?.map((room) => (
+                  <option key={room.id} value={room.id}>
+                    {room.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+
+          <Field label={t('entry.condition')}>
+            <Select value={condition} onChange={(e) => setCondition(e.target.value as Condition | '')}>
+              <option value="">{t('labels.allConditions')}</option>
+              {CONDITIONS.map((value) => (
+                <option key={value} value={value}>
+                  {t(`condition.${value}`)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          <Field label={t('labels.photos')}>
+            <Select value={photoFilter} onChange={(e) => setPhotoFilter(e.target.value as PhotoFilter)}>
+              <option value="all">{t('labels.allPhotos')}</option>
+              <option value="with">{t('labels.withPhotos')}</option>
+              <option value="without">{t('labels.withoutPhotos')}</option>
+            </Select>
+          </Field>
+        </div>
+
+        <Field label={t('common.search')}>
+          <TextInput
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t('labels.searchPlaceholder')}
+            type="search"
+          />
         </Field>
 
-        {(scope === 'floor' || scope === 'room') && (
-          <Field label={t('common.floor')}>
-            <Select
-              value={floorId}
-              onChange={(e) => {
-                setFloorId(e.target.value)
-                setRoomId('')
+        <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+          <span>{t('labels.showing', { shown: filteredLabels.length, total: sheet?.labels.length ?? 0 })}</span>
+          {hasFilters && (
+            <button
+              type="button"
+              className="font-bold text-brand-700"
+              onClick={() => {
+                setQuery('')
+                setCondition('')
+                setPhotoFilter('all')
               }}
             >
-              <option value="">—</option>
-              {floors?.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        )}
+              {t('labels.clearFilters')}
+            </button>
+          )}
+        </div>
 
-        {scope === 'room' && (
-          <Field label={t('common.room')}>
-            <Select value={roomId} onChange={(e) => setRoomId(e.target.value)} disabled={!floorId}>
-              <option value="">—</option>
-              {rooms?.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        )}
-
-        <Button full onClick={() => void doPrint()} disabled={busy || (sheet?.labels.length ?? 0) === 0}>
-          {t('labels.print')} — {t('labels.count', { n: sheet?.labels.length ?? 0 })}
+        <Button full onClick={() => void doPrint()} disabled={busy || filteredLabels.length === 0}>
+          {t('labels.print')} — {t('labels.count', { n: filteredLabels.length })}
         </Button>
       </Card>
 
-      <SectionTitle>{t('labels.preview')}</SectionTitle>
+      <SectionTitle action={<span className="text-xs font-semibold text-slate-500">{filteredLabels.length}</span>}>
+        {t('labels.preview')}
+      </SectionTitle>
 
-      {sheet && sheet.labels.length > 0 ? (
+      {sheet && filteredLabels.length > 0 ? (
         <>
           <p className="-mt-1 px-1 text-xs text-slate-500">{t('labels.tapForPhoto')}</p>
 
-          {/* The card is the most label-looking thing on the screen, so it is
-              what people reach for. It opens the photo like the rows do. */}
-          <Card className="p-0">
-            <button
-              type="button"
-              onClick={() => setSelected(sheet.labels[0])}
-              className="flex w-full items-center gap-3 p-3 text-left active:bg-slate-50"
-            >
-              {previewQr && <img src={previewQr} alt="" className="h-20 w-20" />}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[10px] uppercase tracking-wide text-slate-500">{sheet.organization}</p>
-                <p className="font-mono text-base font-bold text-slate-900">{sheet.labels[0].tag}</p>
-                <p className="truncate text-xs font-semibold text-slate-700">{sheet.labels[0].description}</p>
-                <p className="truncate text-xs text-slate-500">{sheet.labels[0].room}</p>
-                <p className="text-[10px] text-slate-400">
-                  {t('labels.verified')} {sheet.verifiedOn}
-                </p>
-              </div>
-              <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-slate-300" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-          </Card>
+          <div className="space-y-3">
+            {groups.map((group) => (
+              <section key={`${group.floor}|${group.room}`}>
+                <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-bold text-slate-800">{group.room || '—'}</p>
+                    <p className="truncate text-[11px] text-slate-500">{group.floor}</p>
+                  </div>
+                  <span className="chip shrink-0 bg-slate-100 text-slate-600">
+                    {t('labels.count', { n: group.labels.length })}
+                  </span>
+                </div>
 
-          <Card className="divide-y divide-slate-100">
-            {sheet.labels.slice(0, 60).map((l) => (
-              <button
-                key={l.tag}
-                type="button"
-                onClick={() => setSelected(l)}
-                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs active:bg-slate-50"
-              >
-                <span className="font-mono font-bold text-slate-800">{l.tag}</span>
-                <span className="min-w-0 flex-1 truncate text-slate-600">{l.description}</span>
-                <span className="shrink-0 text-slate-400">{l.room}</span>
-                <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-slate-300" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
+                <Card className="divide-y divide-slate-100 p-0">
+                  {group.labels.map((label) => (
+                    <button
+                      key={label.tag}
+                      type="button"
+                      onClick={() => setSelected(label)}
+                      className="flex w-full items-center gap-3 px-3 py-2.5 text-left active:bg-slate-50"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          <span className="font-mono text-xs font-bold text-slate-900">{label.tag}</span>
+                          {label.photoCount > 0 && (
+                            <span className="text-[11px] font-semibold text-brand-700">📷 {label.photoCount}</span>
+                          )}
+                        </div>
+                        <p className="truncate text-xs text-slate-600">{label.description}</p>
+                        {label.serial && <p className="truncate text-[11px] text-slate-400">{label.serial}</p>}
+                      </div>
+                      <span className={`chip shrink-0 ${CONDITION_STYLE[label.condition].chip}`}>
+                        {t(`condition.${label.condition}`)}
+                      </span>
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="h-4 w-4 shrink-0 text-slate-300"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  ))}
+                </Card>
+              </section>
             ))}
-            {sheet.labels.length > 60 && (
-              <p className="px-3 py-2 text-center text-xs text-slate-500">
-                + {sheet.labels.length - 60} {t('common.items')}
-              </p>
-            )}
-          </Card>
+          </div>
+
+          {filteredLabels.length > visibleLabels.length && (
+            <p className="text-center text-xs text-slate-500">
+              {t('labels.moreResults', { n: filteredLabels.length - visibleLabels.length })}
+            </p>
+          )}
         </>
       ) : (
-        <EmptyState title={t('labels.nothing')} hint={t('reports.nothing')} />
+        <EmptyState
+          title={hasFilters ? t('reports.noMatch') : t('labels.nothing')}
+          hint={hasFilters ? t('labels.clearFilters') : t('reports.nothing')}
+        />
       )}
 
       <LabelPhotoSheet label={selected} onClose={() => setSelected(null)} />
-
       <Toast message={toast} />
     </div>
   )
 }
 
-/**
- * The photo taken when the item was recorded, so whoever is sticking labels
- * can confirm the tag belongs to the thing in front of them before it goes on.
- */
+/** Shows every photo attached to the selected label's inspection entry. */
 function LabelPhotoSheet({ label, onClose }: { label: LabelData | null; onClose: () => void }) {
   const t = useT()
-  // Pull the bytes down if this device never had them — the phone that took
-  // the photo may not be the one sticking the labels.
+
   useEffect(() => {
     if (!label) return
     void ensureEntryPhotos(label.entryId)
@@ -203,10 +294,10 @@ function LabelPhotoSheet({ label, onClose }: { label: LabelData | null; onClose:
   )
 
   const urls = useMemo(
-    () => (photos ?? []).map((p) => ({ id: p.id, url: URL.createObjectURL(photoBlob(p)) })),
+    () => (photos ?? []).map((photo) => ({ id: photo.id, url: URL.createObjectURL(photoBlob(photo)) })),
     [photos],
   )
-  useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u.url)), [urls])
+  useEffect(() => () => urls.forEach((item) => URL.revokeObjectURL(item.url)), [urls])
 
   if (!label) return null
 
@@ -230,8 +321,8 @@ function LabelPhotoSheet({ label, onClose }: { label: LabelData | null; onClose:
           <p className="rounded-xl bg-slate-50 p-4 text-center text-sm text-slate-500">{t('labels.noPhoto')}</p>
         ) : (
           <div className="grid grid-cols-2 gap-2">
-            {urls.map((u) => (
-              <img key={u.id} src={u.url} alt="" className="w-full rounded-xl object-cover" />
+            {urls.map((item) => (
+              <img key={item.id} src={item.url} alt="" className="w-full rounded-xl object-cover" />
             ))}
           </div>
         )}

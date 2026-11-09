@@ -789,3 +789,33 @@ describe('viewing a report before exporting it', () => {
     expect(await screen.findByText(/nothing matches/i)).toBeTruthy()
   })
 })
+
+describe('finding labels before printing', () => {
+  it('searches and filters labels, grouped by their room', async () => {
+    await signIn()
+
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+    fireEvent.change(await screen.findByDisplayValue('1'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await screen.findByText('1/16 items checked', undefined, { timeout: 5000 })
+
+    fireEvent.click(screen.getByRole('link', { name: /labels/i }))
+
+    expect(await screen.findAllByText('Showing 2 of 2', undefined, { timeout: 5000 })).toHaveLength(2)
+    expect(screen.getByText('SC-1F-P3-001')).toBeTruthy()
+    expect(screen.getByText('SC-1F-P3-002')).toBeTruthy()
+    expect(screen.getByLabelText('Condition')).toBeTruthy()
+    expect(screen.getByLabelText('Photos')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'P3-002' } })
+    await waitFor(() => expect(screen.queryByText('SC-1F-P3-001')).toBeNull())
+    expect(screen.getAllByText('Showing 1 of 2')).toHaveLength(2)
+    expect(screen.getByText('SC-1F-P3-002')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    fireEvent.change(screen.getByLabelText('Photos'), { target: { value: 'with' } })
+    expect(await screen.findByText(/nothing matches/i)).toBeTruthy()
+  }, 10_000)
+})
