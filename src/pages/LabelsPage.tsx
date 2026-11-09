@@ -124,20 +124,31 @@ export default function LabelsPage() {
 
       {sheet && sheet.labels.length > 0 ? (
         <>
-          <Card className="flex items-center gap-3 p-3">
-            {previewQr && <img src={previewQr} alt="" className="h-20 w-20" />}
-            <div className="min-w-0">
-              <p className="truncate text-[10px] uppercase tracking-wide text-slate-500">{sheet.organization}</p>
-              <p className="font-mono text-base font-bold text-slate-900">{sheet.labels[0].tag}</p>
-              <p className="truncate text-xs font-semibold text-slate-700">{sheet.labels[0].description}</p>
-              <p className="truncate text-xs text-slate-500">{sheet.labels[0].room}</p>
-              <p className="text-[10px] text-slate-400">
-                {t('labels.verified')} {sheet.verifiedOn}
-              </p>
-            </div>
-          </Card>
-
           <p className="-mt-1 px-1 text-xs text-slate-500">{t('labels.tapForPhoto')}</p>
+
+          {/* The card is the most label-looking thing on the screen, so it is
+              what people reach for. It opens the photo like the rows do. */}
+          <Card className="p-0">
+            <button
+              type="button"
+              onClick={() => setSelected(sheet.labels[0])}
+              className="flex w-full items-center gap-3 p-3 text-left active:bg-slate-50"
+            >
+              {previewQr && <img src={previewQr} alt="" className="h-20 w-20" />}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[10px] uppercase tracking-wide text-slate-500">{sheet.organization}</p>
+                <p className="font-mono text-base font-bold text-slate-900">{sheet.labels[0].tag}</p>
+                <p className="truncate text-xs font-semibold text-slate-700">{sheet.labels[0].description}</p>
+                <p className="truncate text-xs text-slate-500">{sheet.labels[0].room}</p>
+                <p className="text-[10px] text-slate-400">
+                  {t('labels.verified')} {sheet.verifiedOn}
+                </p>
+              </div>
+              <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-slate-300" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </Card>
 
           <Card className="divide-y divide-slate-100">
             {sheet.labels.slice(0, 60).map((l) => (
