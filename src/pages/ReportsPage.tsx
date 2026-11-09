@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { buildReportBundle, exportFullWorkbook, exportReport, type ReportKind } from '../lib/export-excel'
 import { useSession } from '../state/session'
@@ -18,6 +19,7 @@ const REPORTS: Array<{ kind: ReportKind; title: StringKey; desc: StringKey }> = 
 export default function ReportsPage() {
   const t = useT()
   const { exercise } = useSession()
+  const navigate = useNavigate()
   const [busy, setBusy] = useState<ReportKind | 'all' | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
@@ -86,8 +88,14 @@ export default function ReportsPage() {
 
       <div className="space-y-2">
         {REPORTS.map((r) => (
-          <Card key={r.kind} className="flex items-center gap-3 px-4 py-3">
-            <div className="min-w-0 flex-1">
+          <Card key={r.kind} className="flex items-center gap-2 px-4 py-3">
+            {/* Looking before downloading is the common case — a spreadsheet
+                has to be opened in another app just to answer "how many?". */}
+            <button
+              type="button"
+              className="min-w-0 flex-1 text-left"
+              onClick={() => navigate(`/reports/${r.kind}`)}
+            >
               <p className="font-semibold text-slate-900">{t(r.title)}</p>
               <p className="text-xs text-slate-500">{t(r.desc)}</p>
               {counts && (
@@ -95,7 +103,14 @@ export default function ReportsPage() {
                   {counts[r.kind]} {t('common.items')}
                 </p>
               )}
-            </div>
+            </button>
+            <Button
+              variant="secondary"
+              className="shrink-0 px-3"
+              onClick={() => navigate(`/reports/${r.kind}`)}
+            >
+              {t('reports.view')}
+            </Button>
             <Button
               variant="secondary"
               className="shrink-0 px-3"

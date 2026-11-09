@@ -7,6 +7,7 @@ import RoomPage from './pages/RoomPage'
 import EntryPage from './pages/EntryPage'
 import DashboardPage from './pages/DashboardPage'
 import ReportsPage from './pages/ReportsPage'
+import ReportViewPage from './pages/ReportViewPage'
 import LabelsPage from './pages/LabelsPage'
 import SetupPage from './pages/SetupPage'
 import SyncPage from './pages/SyncPage'
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="/room/:roomId/item/:assetTypeId" element={<KeyedEntryPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/reports/:kind" element={<ReportViewPage />} />
         <Route path="/labels" element={<LabelsPage />} />
         <Route path="/setup" element={<SetupPage />} />
         <Route path="/sync" element={<SyncPage />} />

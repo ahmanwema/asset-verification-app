@@ -758,3 +758,34 @@ describe('identifying a photo that was not just taken', () => {
     expect(screen.getAllByText('Identify')).toHaveLength(1)
   })
 })
+
+describe('viewing a report before exporting it', () => {
+  it('opens the register on screen, and can be searched', async () => {
+    await signIn()
+
+    // Record something so there is a report to look at.
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+    fireEvent.change(await screen.findByDisplayValue('1'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await screen.findByText('1/16 items checked', undefined, { timeout: 5000 })
+
+    fireEvent.click(screen.getByRole('link', { name: /reports/i }))
+    fireEvent.click((await screen.findAllByRole('button', { name: /^view$/i }))[0])
+
+    // The rows are on screen, with their column headings.
+    expect(await screen.findByText('Tag Number', undefined, { timeout: 5000 })).toBeTruthy()
+    expect(await screen.findByText('SC-1F-P3-001')).toBeTruthy()
+    expect(screen.getByText('SC-1F-P3-002')).toBeTruthy()
+
+    // Searching narrows it.
+    fireEvent.change(screen.getByLabelText(/search/i), { target: { value: 'P3-002' } })
+    await waitFor(() => expect(screen.queryByText('SC-1F-P3-001')).toBeNull())
+    expect(screen.getByText('SC-1F-P3-002')).toBeTruthy()
+
+    // A search that matches nothing says so rather than showing a blank table.
+    fireEvent.change(screen.getByLabelText(/search/i), { target: { value: 'zzzz' } })
+    expect(await screen.findByText(/nothing matches/i)).toBeTruthy()
+  })
+})
