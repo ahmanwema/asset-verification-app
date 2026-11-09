@@ -12,6 +12,8 @@ import LabelsPage from './pages/LabelsPage'
 import SetupPage from './pages/SetupPage'
 import SyncPage from './pages/SyncPage'
 import AssetPage from './pages/AssetPage'
+import FinanceRegisterPage from './pages/FinanceRegisterPage'
+import AssetFinancePage from './pages/AssetFinancePage'
 import { useSession } from './state/session'
 import { useT } from './i18n'
 
@@ -58,6 +60,8 @@ export default function App() {
         <Route path="/reports/:kind" element={<ReportViewPage />} />
         <Route path="/labels" element={<LabelsPage />} />
         <Route path="/asset/:entryId" element={<AssetPage />} />
+        <Route path="/asset/:entryId/finance" element={<AssetFinancePage />} />
+        <Route path="/finance" element={<FinanceRegisterPage />} />
         <Route path="/setup" element={<SetupPage />} />
         <Route path="/sync" element={<SyncPage />} />
         <Route path="*" element={<Navigate to="/inspect" replace />} />

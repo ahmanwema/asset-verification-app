@@ -4,6 +4,7 @@ import { EDIT_FIELD_LABEL } from './entries'
 import { entryConditionCounts } from './queries'
 import type { Condition, InspectionEntry } from '../types'
 import { CONDITIONS } from '../types'
+import { calculateDepreciation, financialRecordFor } from './depreciation'
 
 const CONDITION_LABEL: Record<Condition, string> = {
   G: 'Good',
@@ -15,7 +16,7 @@ const CONDITION_LABEL: Record<Condition, string> = {
 /** Unserviceable first — that is the order a maintenance team acts on. */
 const CONDITION_PRIORITY: Record<Condition, number> = { U: 1, P: 2, F: 3, G: 4 }
 
-export type ReportKind = 'register' | 'rooms' | 'condition' | 'variance' | 'tags' | 'editlog'
+export type ReportKind = 'register' | 'depreciation' | 'rooms' | 'condition' | 'variance' | 'tags' | 'editlog'
 
 export interface ReportBundle {
   meta: {
@@ -29,6 +30,7 @@ export interface ReportBundle {
   }
   summary: Array<Record<string, string | number>>
   register: Array<Record<string, string | number>>
+  depreciation: Array<Record<string, string | number>>
   rooms: Array<Record<string, string | number>>
   roomTotals: Array<Record<string, string | number>>
   condition: Array<Record<string, string | number>>
@@ -119,6 +121,8 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
     const tags = e.tagNumbers.length > 0 ? e.tagNumbers : Array.from({ length: e.quantity }, () => '')
 
     tags.forEach((tag, i) => {
+      const finance = financialRecordFor(e, tag)
+      const depreciation = calculateDepreciation(finance, exercise?.date ?? '')
       register.push({
         'Tag Number': tag,
         'Asset Description': nameOf(e),
@@ -130,6 +134,14 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         Brand: e.brand,
         Model: e.model,
         Condition: CONDITION_LABEL[perItem[i] ?? e.condition],
+        'Acquisition Date': finance?.acquisitionDate ?? '',
+        'Available for Use': finance?.availableForUseDate ?? '',
+        'Original Cost': finance?.originalCost ?? '',
+        'Residual Value': finance?.residualValue ?? '',
+        'Useful Life (Years)': finance?.usefulLifeMonths ? finance.usefulLifeMonths / 12 : '',
+        'Depreciation Method': finance ? 'Straight line' : '',
+        'Accumulated Depreciation': depreciation.complete ? Math.round(depreciation.accumulatedDepreciation * 100) / 100 : '',
+        'Net Book Value': depreciation.complete ? Math.round(depreciation.carryingAmount * 100) / 100 : '',
         'Item Type': e.itemType ?? '',
         Material: e.material ?? '',
         Colour: e.colour ?? '',
@@ -142,6 +154,42 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         Inspector: whoById.get(e.inspectorId)?.name ?? '',
         'Inspected At': fmtDate(e.inspectedAt),
         Remarks: e.remarks,
+      })
+    })
+  }
+
+  // --- Depreciation schedule: one accounting row per tagged asset ---------
+  const depreciation: Array<Record<string, string | number>> = []
+  for (const e of sorted) {
+    if (e.notPresent || e.quantity === 0) continue
+    const loc = locationOf(e.roomId)
+    e.tagNumbers.forEach((tag, index) => {
+      const finance = financialRecordFor(e, tag)
+      const result = calculateDepreciation(finance, exercise?.date ?? '')
+      depreciation.push({
+        'Tag Number': tag,
+        'Asset Description': nameOf(e),
+        Category: e.isUnlistedItem ? 'Unlisted' : (typeById.get(e.assetTypeId ?? '')?.category ?? ''),
+        Floor: loc.floorName,
+        Room: loc.roomName,
+        'Serial Number': e.serialNumbers[index] ?? e.serialNumbers[0] ?? '',
+        'Acquisition Date': finance?.acquisitionDate ?? '',
+        'Available for Use': finance?.availableForUseDate ?? '',
+        'Original Cost': finance?.originalCost ?? '',
+        'Residual Value': finance?.residualValue ?? '',
+        'Useful Life (Years)': finance?.usefulLifeMonths ? finance.usefulLifeMonths / 12 : '',
+        Method: finance ? 'Straight line' : '',
+        'Opening Accumulated Depreciation': finance?.openingAccumulatedDepreciation ?? '',
+        'Opening Balance Date': finance?.openingBalanceDate ?? '',
+        'Current Year Depreciation': result.complete ? Math.round(result.currentPeriodDepreciation * 100) / 100 : '',
+        'Accumulated Depreciation': result.complete ? Math.round(result.accumulatedDepreciation * 100) / 100 : '',
+        'Net Book Value': result.complete ? Math.round(result.carryingAmount * 100) / 100 : '',
+        'As At': exercise?.date ?? '',
+        Supplier: finance?.supplier ?? '',
+        'Invoice / Reference': finance?.invoiceNumber ?? '',
+        'Funding Source': finance?.fundingSource ?? '',
+        Status: result.complete ? 'Complete' : 'Financial details missing',
+        Notes: finance?.notes ?? '',
       })
     })
   }
@@ -372,6 +420,9 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
     { Metric: 'Asset types in catalog', Value: assetTypes.filter((a) => a.active).length },
     { Metric: 'Items counted', Value: entries.filter((e) => !e.notPresent).reduce((n, e) => n + e.quantity, 0) },
     { Metric: 'Tags issued', Value: tags.length },
+    { Metric: 'Assets with financial details', Value: depreciation.filter((row) => row.Status === 'Complete').length },
+    { Metric: 'Total historical cost', Value: depreciation.reduce((sum, row) => sum + Number(row['Original Cost'] || 0), 0) },
+    { Metric: 'Total net book value', Value: depreciation.reduce((sum, row) => sum + Number(row['Net Book Value'] || 0), 0) },
     { Metric: 'Photos attached', Value: entries.reduce((n, e) => n + e.photoIds.length, 0) },
     { Metric: 'Good', Value: conditionTotals.G },
     { Metric: 'Fair', Value: conditionTotals.F },
@@ -395,6 +446,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
     },
     summary,
     register,
+    depreciation,
     rooms: roomRows,
     roomTotals,
     condition,
@@ -436,6 +488,7 @@ function fileName(bundle: ReportBundle, suffix: string): string {
 
 const SHEETS: Record<ReportKind, { name: string; suffix: string }> = {
   register: { name: 'Fixed Assets Register', suffix: 'Assets-Register' },
+  depreciation: { name: 'Depreciation Schedule', suffix: 'Depreciation-Schedule' },
   rooms: { name: 'Room Summary', suffix: 'Room-Summary' },
   condition: { name: 'Condition Report', suffix: 'Condition-Report' },
   variance: { name: 'Variance Report', suffix: 'Variance-Report' },
@@ -452,6 +505,8 @@ export async function exportReport(exerciseId: string, kind: ReportKind): Promis
   const rows =
     kind === 'register'
       ? bundle.register
+      : kind === 'depreciation'
+        ? bundle.depreciation
       : kind === 'rooms'
         ? bundle.rooms
         : kind === 'condition'
@@ -477,6 +532,7 @@ export async function exportFullWorkbook(exerciseId: string): Promise<number> {
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.summary, 'No data'), 'Summary')
   XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.register, 'Nothing recorded yet'), 'Fixed Assets Register')
+  XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.depreciation, 'Nothing recorded yet'), 'Depreciation Schedule')
   XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.rooms, 'Nothing recorded yet'), 'Room Summary')
   XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.roomTotals, 'No rooms'), 'Room Totals')
   XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.condition, 'No items need attention'), 'Condition Report')

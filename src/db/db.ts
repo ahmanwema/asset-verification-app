@@ -72,6 +72,18 @@ export class AssetDB extends Dexie {
             entry.editHistory ??= []
           })
       })
+
+    // v4 introduces one accounting/depreciation record per tagged asset.
+    this.version(4)
+      .stores({})
+      .upgrade(async (tx) => {
+        await tx
+          .table('entries')
+          .toCollection()
+          .modify((entry: Record<string, unknown>) => {
+            entry.financialRecords ??= []
+          })
+      })
   }
 }
 

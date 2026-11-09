@@ -5,6 +5,7 @@ import { db } from '../db/db'
 import { photoBlob } from '../lib/photos'
 import { entryConditionCounts } from '../lib/queries'
 import { ensureEntryPhotos, resyncEverything } from '../lib/sync'
+import { calculateDepreciation, financialRecordFor } from '../lib/depreciation'
 import { useOnline, useSession } from '../state/session'
 import { useT } from '../i18n'
 import { CONDITIONS } from '../types'
@@ -16,7 +17,7 @@ export default function AssetPage() {
   const requestedTag = search.get('tag') ?? ''
   const t = useT()
   const online = useOnline()
-  const { exercise, selectExercise } = useSession()
+  const { exercise, selectExercise, isAdmin } = useSession()
   const repairAttempt = useRef('')
   const [repairing, setRepairing] = useState(false)
 
@@ -85,6 +86,8 @@ export default function AssetPage() {
   const tagIndex = entry.tagNumbers.indexOf(tag)
   const serial = tagIndex >= 0 ? (entry.serialNumbers[tagIndex] ?? '') : ''
   const conditionCounts = entryConditionCounts(entry)
+  const financialRecord = financialRecordFor(entry, tag)
+  const financial = calculateDepreciation(financialRecord, entryExercise?.date ?? new Date().toISOString().slice(0, 10))
   const details = [
     [t('entry.serial'), serial],
     [t('entry.brand'), entry.brand],
@@ -132,6 +135,30 @@ export default function AssetPage() {
           </div>
         </div>
       </Card>
+
+      {(isAdmin || financial.complete) && (
+        <Card className="space-y-3 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-bold uppercase tracking-wide text-slate-600">{t('finance.assetDetails')}</h2>
+              <p className="text-xs text-slate-500">
+                {financial.complete ? t('finance.asAt', { date: entryExercise?.date ?? '' }) : t('finance.notCaptured')}
+              </p>
+            </div>
+            <Link to={`/asset/${entry.id}/finance?tag=${encodeURIComponent(tag)}`} className="btn-secondary shrink-0 px-3">
+              {financial.complete ? t('reports.view') : t('finance.addDetails')}
+            </Link>
+          </div>
+          {financial.complete && financialRecord && (
+            <div className="grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-sm sm:grid-cols-4">
+              <Info label={t('finance.originalCost')} value={financialRecord.originalCost.toLocaleString('en-TZ')} />
+              <Info label={t('finance.accumulatedDepreciation')} value={Math.round(financial.accumulatedDepreciation).toLocaleString('en-TZ')} />
+              <Info label={t('finance.netBookValue')} value={Math.round(financial.carryingAmount).toLocaleString('en-TZ')} />
+              <Info label={t('finance.availableDate')} value={financialRecord.availableForUseDate} />
+            </div>
+          )}
+        </Card>
+      )}
 
       <section>
         <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-500">{t('asset.photos')}</h2>

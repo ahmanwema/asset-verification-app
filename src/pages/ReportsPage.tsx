@@ -9,6 +9,7 @@ import type { StringKey } from '../i18n/strings'
 
 const REPORTS: Array<{ kind: ReportKind; title: StringKey; desc: StringKey }> = [
   { kind: 'register', title: 'reports.register', desc: 'reports.registerDesc' },
+  { kind: 'depreciation', title: 'reports.depreciation', desc: 'reports.depreciationDesc' },
   { kind: 'rooms', title: 'reports.room', desc: 'reports.roomDesc' },
   { kind: 'condition', title: 'reports.condition', desc: 'reports.conditionDesc' },
   { kind: 'variance', title: 'reports.variance', desc: 'reports.varianceDesc' },
@@ -30,6 +31,7 @@ export default function ReportsPage() {
     const b = await buildReportBundle(exercise.id)
     return {
       register: b.register.length,
+      depreciation: b.depreciation.length,
       rooms: b.rooms.length,
       condition: b.condition.length,
       variance: b.variance.length,
@@ -82,6 +84,10 @@ export default function ReportsPage() {
 
       <Button full onClick={() => void runAll()} disabled={busy !== null}>
         {busy === 'all' ? t('common.loading') : t('reports.exportAll')}
+      </Button>
+
+      <Button variant="secondary" full onClick={() => navigate('/finance')}>
+        {t('finance.manage')}
       </Button>
 
       <SectionTitle>{t('reports.exportExcel')}</SectionTitle>

@@ -62,6 +62,7 @@ const HISTORY_FIELD_KEY: Record<string, StringKey> = {
   remarks: 'entry.remarks',
   unlistedItemName: 'entry.unlistedName',
   photos: 'entry.photo',
+  financialDetails: 'finance.assetDetails',
 }
 
 function fmtWhen(ts: number): string {

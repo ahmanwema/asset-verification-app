@@ -5,6 +5,7 @@ export type Condition = 'G' | 'F' | 'P' | 'U'
 export type Role = 'admin' | 'inspector'
 export type ExerciseStatus = 'draft' | 'active' | 'completed'
 export type Lang = 'en' | 'sw'
+export type DepreciationMethod = 'straight_line'
 
 export const CONDITIONS: Condition[] = ['G', 'F', 'P', 'U']
 
@@ -96,6 +97,29 @@ export interface EditRecord {
 /** Counts per condition; used when quantity > 1 and items differ. */
 export type ConditionBreakdown = Partial<Record<Condition, number>>
 
+/**
+ * Accounting details for one physical asset/tag. An inspection entry can hold
+ * many identical items, but each tagged item needs its own acquisition history
+ * and carrying amount.
+ */
+export interface AssetFinancialRecord {
+  tagNumber: string
+  acquisitionDate: string
+  availableForUseDate: string
+  originalCost: number
+  residualValue: number
+  usefulLifeMonths: number
+  depreciationMethod: DepreciationMethod
+  openingAccumulatedDepreciation: number
+  openingBalanceDate: string
+  supplier: string
+  invoiceNumber: string
+  fundingSource: string
+  notes: string
+  updatedAt: number
+  updatedBy: string
+}
+
 export interface InspectionEntry {
   id: string
   exerciseId: string
@@ -111,6 +135,9 @@ export interface InspectionEntry {
   conditionBreakdown?: ConditionBreakdown
   photoIds: string[]
   remarks: string
+
+  /** One accounting record per tag number; older entries legitimately omit it. */
+  financialRecords?: AssetFinancialRecord[]
 
   // --- Detailed description fields (optional, captured under "More details") ---
   /** What the item is made of, e.g. "Wooden seat and backrest with metal frame". */

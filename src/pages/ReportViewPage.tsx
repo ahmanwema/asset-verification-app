@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { db } from '../db/db'
 import { buildReportBundle, exportReport, type ReportKind } from '../lib/export-excel'
 import { useSession } from '../state/session'
 import { useT } from '../i18n'
@@ -11,6 +12,7 @@ type Row = Record<string, string | number>
 
 const TITLES: Record<ReportKind, StringKey> = {
   register: 'reports.register',
+  depreciation: 'reports.depreciation',
   rooms: 'reports.room',
   condition: 'reports.condition',
   variance: 'reports.variance',
@@ -44,8 +46,18 @@ export default function ReportViewPage() {
     [exercise?.id],
   )
 
+  const entryByTag = useLiveQuery(async () => {
+    if (!exercise) return new Map<string, string>()
+    const entries = await db.entries.where('exerciseId').equals(exercise.id).toArray()
+    const pairs = entries
+      .filter((entry) => !entry.deleted)
+      .flatMap((entry) => entry.tagNumbers.map((tag) => [tag, entry.id] as const))
+    return new Map(pairs)
+  }, [exercise?.id])
+
   const rows: Row[] = useMemo(() => {
     if (!bundle) return []
+    if (reportKind === 'depreciation') return bundle.depreciation
     if (reportKind === 'rooms') return bundle.rooms
     if (reportKind === 'condition') return bundle.condition
     if (reportKind === 'variance') return bundle.variance
@@ -150,7 +162,16 @@ export default function ReportViewPage() {
                   <tr key={i} className={i % 2 ? 'bg-slate-50/60' : ''}>
                     {columns.map((c) => (
                       <td key={c} className="max-w-[18rem] truncate border-b border-slate-100 px-2 py-1.5 text-slate-700">
-                        {String(row[c] ?? '')}
+                        {c === 'Tag Number' && entryByTag?.has(String(row[c] ?? '')) ? (
+                          <Link
+                            to={`/asset/${entryByTag.get(String(row[c]))}?tag=${encodeURIComponent(String(row[c]))}`}
+                            className="font-mono font-bold text-brand-700 underline decoration-brand-200 underline-offset-2"
+                          >
+                            {String(row[c])}
+                          </Link>
+                        ) : (
+                          String(row[c] ?? '')
+                        )}
                       </td>
                     ))}
                   </tr>

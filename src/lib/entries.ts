@@ -87,6 +87,7 @@ const TRACKED_FIELDS: Array<{ field: string; label: string; render: (e: Inspecti
 export const EDIT_FIELD_LABEL: Record<string, string> = Object.fromEntries(
   TRACKED_FIELDS.map((f) => [f.field, f.label]),
 )
+EDIT_FIELD_LABEL.financialDetails = 'Financial details'
 
 /**
  * Hard cap on retained records. The whole entry travels to the server as one
@@ -163,6 +164,7 @@ export async function saveEntry(draft: EntryDraft): Promise<InspectionEntry> {
         : undefined,
     photoIds: draft.photoIds ?? existing?.photoIds ?? [],
     remarks: draft.remarks.trim(),
+    financialRecords: existing?.financialRecords ?? [],
     material: (draft.material ?? '').trim(),
     colour: (draft.colour ?? '').trim(),
     itemType: (draft.itemType ?? '').trim(),
