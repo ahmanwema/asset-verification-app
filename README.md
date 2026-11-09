@@ -235,16 +235,31 @@ src/
   pages/       Login · Inspect · Floor · Room · Entry · Dashboard · Reports · Labels · Setup · Sync
   components/  AppShell · ui primitives · charts
   i18n/        English + Swahili string tables
-server/        Dependency-free Node sync API (node:sqlite) that also serves dist/
+server/        On-site deployment: Node sync API (node:sqlite) that also serves dist/
   index.js     HTTP, auth, sync protocol, photo store, static hosting
-  vision.js    Photo recognition: the system prompt and the OpenAI call
+  vision.js    Photo recognition: the system prompt and the OpenAI call   [shared]
+  sync-rules.js  Which pushes are accepted, and the conflict rule         [shared]
+  crypto.js    Password hashing and token minting                         [shared]
+api/           Vercel deployment: serverless functions over Postgres
+  auth.js      POST /api/auth  (the client calls /api/login; vercel.json rewrites)
+  sync.js      POST /api/sync
+  health.js    GET  /api/health
+  photos/[id].js  POST and GET one photo
+  vision/      identify.js + status.js
+  _lib/        store.js (SQL) · handlers.js (logic) · db.js (pool) · http.js
 ```
+
+The two deployments share the rules marked `[shared]`. Only the storage differs:
+the conflict rule in particular lives in exactly one file, because two
+inspectors' work must not resolve differently depending on where the exercise
+happens to be hosted.
 
 | Layer | Choice | Why |
 |---|---|---|
 | UI | React 18 + TypeScript + Tailwind, Vite | Fast builds, small runtime, PWA plugin |
 | Offline store | Dexie / IndexedDB | Reactive queries (`useLiveQuery`) keep the dashboard live |
-| Server | Node `http` + `node:sqlite`, zero deps | Runs from a laptop on site with only Node installed |
+| Server (on site) | Node `http` + `node:sqlite`, zero deps | Runs from a laptop on the school LAN with only Node installed |
+| Server (hosted) | Vercel functions + Postgres (`pg`) | Stateless; a standard connection string works with Vercel Postgres, Neon or Supabase |
 | Excel | SheetJS, lazy-loaded | 430 KB kept out of the initial bundle |
 | Charts | Hand-built HTML/CSS bars | No chart library; every value directly labelled |
 
@@ -269,7 +284,7 @@ missing.
 ## Testing
 
 ```bash
-npm test          # 90 tests
+npm test          # 129 tests
 npm run typecheck
 ```
 
@@ -281,12 +296,19 @@ npm run typecheck
 | `src/lib/sync.test.ts` | Client↔server round trip against a live server: push, pull, conflicts, photo upload |
 | `server/sync.test.mjs` | The protocol itself: auth, conflict rules, soft deletes, photo and vision endpoints |
 | `server/vision.test.mjs` | Photo recognition against a stub OpenAI: request shape, prompt, model override, junk-value repair, timeouts, missing key |
+| `api/postgres.test.mjs` | The serverless API against a real Postgres (PGlite): schema, auth, tokens, conflicts, JSONB round-trip, BIGINT timestamps, photo bytes |
+| `api/routes.test.mjs` | The Vercel route files over real HTTP: method guards, bearer auth, CORS preflight, photo download headers |
 | `src/test/app.test.tsx` | Sign-in, floor→room→checklist navigation, tag preview, dashboard, language toggle, More details, AI fill and undo, edit history |
 
-Tests run against a real in-memory IndexedDB (`fake-indexeddb`) and a real spawned
-server process — no mocked database, no mocked HTTP. The vision tests point the
-server at a local stub instead of OpenAI, so the suite needs no API key and
-spends nothing.
+Tests run against a real in-memory IndexedDB (`fake-indexeddb`), a real spawned
+server process, and a real Postgres — PGlite is Postgres compiled to WASM, so
+the SQL in `api/_lib/store.js` is genuinely executed rather than mocked. No
+mocked database, no mocked HTTP. The vision tests point the server at a local
+stub instead of OpenAI, so the suite needs no API key and spends nothing.
+
+What the suite cannot prove about the hosted deployment: connection pooling
+under real serverless concurrency, TLS to a managed provider, and Vercel's own
+routing table. Those need a deployment to verify.
 
 ---
 
@@ -303,8 +325,9 @@ This is a field tool, and the auth is deliberately simple. Before production use
   deployment.
 - The sync API has **no transport encryption of its own** — run it behind TLS, or
   keep it on a trusted site LAN.
-- Photos are stored on the server's local disk under `server/uploads/`. Swap
-  `handleSync`'s photo endpoints for S3 if you need durable object storage.
+- Photos are stored on the on-site server's local disk under `server/uploads/`,
+  and in Postgres as `BYTEA` on Vercel. Move the latter to object storage if the
+  estate outgrows the database.
 - **Photo recognition sends photographs to OpenAI.** The key is server-side and
   never reaches the phone, but the images themselves leave your network when the
   feature is used. Leave `OPENAI_API_KEY` unset if that is not acceptable for the
@@ -314,15 +337,86 @@ This is a field tool, and the auth is deliberately simple. Before production use
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PORT` | `4000` | HTTP port |
-| `DATA_DIR` | `server/data` | SQLite database location |
-| `UPLOAD_DIR` | `server/uploads` | Photo storage |
+| `POSTGRES_URL` / `DATABASE_URL` | _(unset)_ | Vercel only: pooled Postgres connection string. Without it the API returns `503 database-not-configured`. |
+| `PORT` | `4000` | On-site only: HTTP port |
+| `DATA_DIR` | `server/data` | On-site only: SQLite database location |
+| `UPLOAD_DIR` | `server/uploads` | On-site only: photo storage |
 | `ADMIN_EMAIL` | `admin@sufa.ac.tz` | Seeded server admin |
 | `ADMIN_PASSWORD` | `verify123` | Seeded server admin password — change this |
 | `OPENAI_API_KEY` | _(unset)_ | Enables photo recognition; without it the feature is off |
 | `OPENAI_MODEL` | `gpt-4o` | `gpt-4o` or `gpt-4o-mini` |
 | `OPENAI_BASE_URL` | OpenAI | Point at a proxy or compatible gateway |
 | `OPENAI_TIMEOUT_MS` | `45000` | How long to wait before telling the inspector it timed out |
+
+## Deploying
+
+There are two deployments, and they are not alternatives so much as different
+situations. The app itself is identical in both: the client is offline-first
+either way, and a device set to one server can be pointed at the other from
+**Setup → Sync**.
+
+### Vercel (hosted)
+
+The static build goes to Vercel's CDN and `api/` becomes serverless functions.
+
+1. **Provision Postgres.** Vercel Postgres from the dashboard, or Neon or
+   Supabase. Any of them works — the code uses a plain connection string.
+2. **Set the environment variables** in Project → Settings:
+
+   | Variable | Needed? | Note |
+   |---|---|---|
+   | `POSTGRES_URL` | yes | Vercel sets this when you attach a database. Use the **pooled** string. |
+   | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | yes | The first account. Set a real password — the default is public. |
+   | `OPENAI_API_KEY` | optional | Without it everything works except photo recognition. |
+
+3. **Create the schema.** The functions do it themselves on a cold start, but
+   running it by hand first turns a bad connection string into a clear error
+   rather than a 500 on someone's first sign-in:
+
+   ```bash
+   POSTGRES_URL="postgres://…" npm run db:init
+   ```
+
+4. **Deploy** — `vercel --prod`, or connect the GitHub repo.
+
+**Use the pooled connection string.** Each serverless invocation is its own
+process opening its own socket; at any real concurrency, direct connections run
+the database out of slots. Neon's `-pooler` host and Supabase's port-6543
+endpoint exist for this.
+
+Two platform limits are worth knowing. A function request body is capped at
+**4.5 MB**, against 16 MB on the on-site server — records are small JSON and
+photos upload one per request, so this is headroom rather than a constraint,
+but a single enormous first sync is the case that would hit it. And
+`api/vision/identify.js` is given a 60s `maxDuration` in `vercel.json` because
+a vision call can take 30s or more; lower it if your plan refuses that value.
+
+Photos are stored in Postgres as `BYTEA`. A serverless function has no durable
+disk, so the on-site `uploads/` directory has no equivalent. At ~200 KB per
+compressed photo this is comfortable for an exercise; past a few gigabytes,
+move that one table to object storage and keep the row as a pointer — nothing
+else in the app touches the bytes.
+
+### On site (a laptop on the school LAN)
+
+Still the right answer where the connection is unreliable, and unchanged:
+
+```bash
+npm run build && npm run server     # http://localhost:4000
+```
+
+One process, SQLite in `server/data/`, photos in `server/uploads/`, and it
+serves the PWA itself. No internet needed except for photo recognition.
+
+### The service worker
+
+Both deployments precache the app shell and treat `/api/*` as **NetworkOnly**,
+in both directions — a cached sync response would silently resurrect deleted
+records, and a cached vision answer would describe the previous photo. Offline,
+those requests fail and the app falls back to IndexedDB, which is what the
+offline-first flow expects. `navigateFallbackDenylist` keeps a navigation to an
+API path from being answered with `index.html`, which matters on Vercel where
+the app and the API share one origin.
 
 ## Not built yet
 

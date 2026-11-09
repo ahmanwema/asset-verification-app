@@ -6,6 +6,10 @@
  * nothing but Node installed. It also serves the built PWA from dist/ when
  * present, so one process covers the whole exercise.
  *
+ * This is one of two deployments. The other is Vercel (`api/`, Postgres), and
+ * both import the same rules from ./sync-rules.js, ./crypto.js and
+ * ./vision.js — only the storage differs.
+ *
  * Storage model: every syncable table lands in one `records` table keyed by
  * (table_name, id) with the client JSON kept verbatim. That keeps the server
  * schema-agnostic — adding a field to the client needs no migration here.
@@ -17,6 +21,8 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { handleVisionIdentify, visionStatus } from './vision.js'
+import { SYNC_TABLES, TOKEN_TTL_MS, decideRecord, userFromInspector } from './sync-rules.js'
+import { newUserId, scryptHash, sha256, verifyPassword } from './crypto.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
@@ -36,18 +42,6 @@ try {
 
 const PORT = Number(process.env.PORT || 4000)
 const MAX_BODY = 16 * 1024 * 1024
-const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000
-
-const SYNC_TABLES = new Set([
-  'organizations',
-  'inspectors',
-  'exercises',
-  'floors',
-  'rooms',
-  'assetTypes',
-  'entries',
-  'signoffs',
-])
 
 fs.mkdirSync(DATA_DIR, { recursive: true })
 fs.mkdirSync(UPLOAD_DIR, { recursive: true })
@@ -91,31 +85,13 @@ db.exec(`
 
 // ---------------------------------------------------------------- auth ------
 
-function scryptHash(password, salt = crypto.randomBytes(16).toString('hex')) {
-  const derived = crypto.scryptSync(password, salt, 64).toString('hex')
-  return `${salt}:${derived}`
-}
-
-function scryptVerify(password, stored) {
-  const [salt, expected] = String(stored).split(':')
-  if (!salt || !expected) return false
-  const actual = crypto.scryptSync(password, salt, 64).toString('hex')
-  const a = Buffer.from(actual, 'hex')
-  const b = Buffer.from(expected, 'hex')
-  return a.length === b.length && crypto.timingSafeEqual(a, b)
-}
-
-function sha256(text) {
-  return crypto.createHash('sha256').update(text, 'utf8').digest('hex')
-}
-
 function seedAdmin() {
   const email = (process.env.ADMIN_EMAIL || 'admin@sufa.ac.tz').toLowerCase()
   const password = process.env.ADMIN_PASSWORD || 'verify123'
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email)
   if (existing) return
   db.prepare('INSERT INTO users (id, email, name, role, scrypt, sha256) VALUES (?, ?, ?, ?, ?, ?)').run(
-    `usr_${crypto.randomUUID()}`,
+    newUserId(),
     email,
     process.env.ADMIN_NAME || 'Admin',
     'admin',
@@ -150,30 +126,26 @@ function userForRequest(req) {
   return row
 }
 
-/**
- * Field accounts are created offline in the app's Setup screen and arrive here
- * on the first sync. We register them so they can authenticate against this
- * server too, carrying over the SHA-256 unlock hash the client stores.
- */
+/** Registers a field-created account so it can sign in to this server too. */
 function upsertUserFromInspector(inspector) {
-  if (!inspector?.email) return
-  const email = String(inspector.email).toLowerCase()
-  const existing = db.prepare('SELECT id, scrypt FROM users WHERE email = ?').get(email)
+  const user = userFromInspector(inspector)
+  if (!user) return
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(user.email)
   if (existing) {
     db.prepare('UPDATE users SET name = ?, role = ?, sha256 = COALESCE(?, sha256) WHERE id = ?').run(
-      inspector.name || email,
-      inspector.role === 'admin' ? 'admin' : 'inspector',
-      inspector.passwordHash || null,
+      user.name,
+      user.role,
+      user.sha256,
       existing.id,
     )
     return
   }
   db.prepare('INSERT INTO users (id, email, name, role, scrypt, sha256) VALUES (?, ?, ?, ?, NULL, ?)').run(
-    inspector.id || `usr_${crypto.randomUUID()}`,
-    email,
-    inspector.name || email,
-    inspector.role === 'admin' ? 'admin' : 'inspector',
-    inspector.passwordHash || null,
+    user.id || newUserId(),
+    user.email,
+    user.name,
+    user.role,
+    user.sha256,
   )
 }
 
@@ -183,53 +155,29 @@ function recordOf(row) {
   return JSON.parse(row.json)
 }
 
-/**
- * Applies one client record.
- *
- * Conflict rule: a record is a conflict when the server copy was last written
- * by a different inspector and changed after the client's last sync — i.e. the
- * client is overwriting an edit it never saw. Everything else is last-write-wins.
- */
+/** Applies one client record; the decision itself lives in sync-rules.js. */
 function applyRecord(tableName, incoming, since, actorId) {
-  const id = String(incoming.id || '')
-  if (!id) return { status: 'rejected' }
+  const existingRow = db
+    .prepare('SELECT updated_at, inspector_id, json FROM records WHERE table_name = ? AND id = ?')
+    .get(tableName, String(incoming?.id || ''))
+  const existing = existingRow
+    ? { updatedAt: Number(existingRow.updated_at || 0), inspectorId: existingRow.inspector_id }
+    : null
 
-  const existingRow = db.prepare('SELECT * FROM records WHERE table_name = ? AND id = ?').get(tableName, id)
-  const incomingUpdated = Number(incoming.updatedAt || 0)
-  const inspectorId = incoming.inspectorId || actorId || null
+  const decision = decideRecord({ tableName, incoming, existing, since, actorId })
+  if (decision.action === 'reject') return { status: 'rejected' }
+  if (decision.action === 'conflict') return { status: 'conflict', server: recordOf(existingRow) }
 
-  const write = () => {
-    db.prepare(
-      `INSERT INTO records (table_name, id, updated_at, inspector_id, deleted, json)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(table_name, id) DO UPDATE SET
-         updated_at = excluded.updated_at,
-         inspector_id = excluded.inspector_id,
-         deleted = excluded.deleted,
-         json = excluded.json`,
-    ).run(tableName, id, incomingUpdated, inspectorId, incoming.deleted ? 1 : 0, JSON.stringify(incoming))
-  }
-
-  if (!existingRow) {
-    write()
-    return { status: 'accepted' }
-  }
-
-  const existing = recordOf(existingRow)
-  const serverUpdated = Number(existingRow.updated_at || 0)
-  const differentAuthor =
-    tableName === 'entries' &&
-    existingRow.inspector_id &&
-    inspectorId &&
-    existingRow.inspector_id !== inspectorId
-
-  if (differentAuthor && serverUpdated > Number(since || 0)) {
-    return { status: 'conflict', server: existing }
-  }
-  if (incomingUpdated < serverUpdated) {
-    return { status: 'conflict', server: existing }
-  }
-  write()
+  const { row } = decision
+  db.prepare(
+    `INSERT INTO records (table_name, id, updated_at, inspector_id, deleted, json)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(table_name, id) DO UPDATE SET
+       updated_at = excluded.updated_at,
+       inspector_id = excluded.inspector_id,
+       deleted = excluded.deleted,
+       json = excluded.json`,
+  ).run(tableName, row.id, row.updatedAt, row.inspectorId, row.deleted ? 1 : 0, JSON.stringify(row.json))
   return { status: 'accepted' }
 }
 
@@ -358,12 +306,7 @@ const server = http.createServer(async (req, res) => {
       const email = String(body.email || '').toLowerCase().trim()
       const password = String(body.password || '')
       const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email)
-      const ok = user
-        ? user.scrypt
-          ? scryptVerify(password, user.scrypt)
-          : Boolean(user.sha256) && user.sha256 === sha256(password)
-        : false
-      if (!ok) {
+      if (!verifyPassword(password, user)) {
         sendJson(res, 401, { error: 'invalid-credentials' })
         return
       }

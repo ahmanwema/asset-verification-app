@@ -1,0 +1,10 @@
+# Only affects `vercel deploy` from the CLI; a Git deployment uploads committed
+# files only. Kept deliberately small — excluding a file the build needs breaks
+# the deployment, and the test files are tiny and never bundled into a function.
+.vercel
+coverage
+dist
+server/data
+server/uploads
+*.log
+*.tsbuildinfo

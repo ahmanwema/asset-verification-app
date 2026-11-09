@@ -7,6 +7,9 @@ server/data
 server/uploads
 *.log
 
+# Vercel CLI link + local build output
+.vercel
+
 # Secrets
 .env
 .env.local

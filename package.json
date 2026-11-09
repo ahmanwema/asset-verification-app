@@ -4,6 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Offline-first PWA for physical asset verification & tagging exercises",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -12,12 +15,14 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "server": "node server/index.js",
+    "db:init": "node scripts/db-init.mjs",
     "start": "npm run build && node server/index.js",
     "icons": "node scripts/make-icons.mjs"
   },
   "dependencies": {
     "dexie": "^4.0.10",
     "dexie-react-hooks": "^1.1.7",
+    "pg": "^8.13.1",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -25,6 +30,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@types/qrcode": "^1.5.5",
