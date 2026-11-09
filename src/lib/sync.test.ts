@@ -96,8 +96,13 @@ describe('connection', () => {
   })
 
   it('stores a token after a successful server login', async () => {
-    expect(await login('admin@test.local', 'wrong')).toBe(false)
-    expect(await login('admin@test.local', 'secret123')).toBe(true)
+    expect(await login('admin@test.local', 'wrong')).toBeNull()
+
+    // The account comes back so a device with no local records can create one.
+    const account = await login('admin@test.local', 'secret123')
+    expect(account?.email).toBe('admin@test.local')
+    expect(account?.id).toBeTruthy()
+
     const state = await loadSyncState()
     expect(state.token).toMatch(/^[0-9a-f]{64}$/)
   })
