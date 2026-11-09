@@ -230,7 +230,11 @@ export async function seedIfEmpty(): Promise<void> {
  * The caller reloads the page afterwards.
  */
 export async function startFresh(): Promise<void> {
-  await db.delete()
-  await db.open()
+  // Tables are emptied rather than the database dropped: deleting it needs
+  // every connection closed, and the app's live queries hold one open, so a
+  // caller that carries on afterwards — registration does — would hang.
+  await db.transaction('rw', db.tables, async () => {
+    for (const table of db.tables) await table.clear()
+  })
   await setMeta(SEED_DISABLED_KEY, true)
 }

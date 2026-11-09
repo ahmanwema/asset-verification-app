@@ -6,6 +6,7 @@ import { I18nProvider } from '../i18n'
 import { SessionProvider } from '../state/session'
 import { SEED_PASSWORD, seedIfEmpty, startFresh } from '../db/seed'
 import { db, setMeta } from '../db/db'
+import { sha256 } from '../lib/hash'
 import { resetDb } from './fixtures'
 
 function renderApp() {
@@ -436,5 +437,119 @@ describe('signing in on a device with no accounts', () => {
 
     expect(await screen.findByText(/wrong email or password/i)).toBeTruthy()
     expect(await db.inspectors.count()).toBe(0)
+  })
+})
+
+describe('registering an institution', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('creates the organization, clears the sample data and signs the admin in', { timeout: 20000 }, async () => {
+    const now = Date.now()
+    const hash = await sha256('a-good-password')
+
+    // Stands in for the serverless API: register, then the pull that brings
+    // the new tenant's organization, exercise and admin down to the device.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: RequestInfo | URL) => {
+        const target = String(url)
+        if (target.includes('/register')) {
+          return new Response(
+            JSON.stringify({
+              token: 'server-token',
+              inspector: { id: 'usr_1', name: 'Asha Mushi', email: 'asha@mlimani.ac.tz', role: 'admin' },
+              organization: { id: 'org_1', name: 'Mlimani Secondary' },
+            }),
+            { status: 201, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        if (target.includes('/sync')) {
+          return new Response(
+            JSON.stringify({
+              serverTime: now,
+              accepted: {},
+              conflicts: [],
+              changes: {
+                organizations: [
+                  { id: 'org_1', name: 'Mlimani Secondary', address: 'Dodoma', updatedAt: now },
+                ],
+                exercises: [
+                  {
+                    id: 'ex_1',
+                    orgId: 'org_1',
+                    name: 'Asset Verification 2026',
+                    date: '2026-11-09',
+                    status: 'active',
+                    approvedBy: '',
+                    teamLeaderId: 'usr_1',
+                    updatedAt: now,
+                  },
+                ],
+                inspectors: [
+                  {
+                    id: 'usr_1',
+                    name: 'Asha Mushi',
+                    email: 'asha@mlimani.ac.tz',
+                    role: 'admin',
+                    active: true,
+                    passwordHash: hash,
+                    updatedAt: now,
+                  },
+                ],
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+
+    renderApp()
+    fireEvent.click(await screen.findByRole('button', { name: /register an institution/i }))
+
+    fireEvent.change(await screen.findByLabelText('Institution name'), {
+      target: { value: 'Mlimani Secondary' },
+    })
+    fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Asha Mushi' } })
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'asha@mlimani.ac.tz' } })
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'a-good-password' } })
+    fireEvent.change(screen.getByLabelText(/confirm password/i), { target: { value: 'a-good-password' } })
+    fireEvent.click(screen.getByRole('button', { name: /create institution/i }))
+
+    // The Sufa Schools sample is gone, replaced by the registered tenant.
+    await waitFor(
+      async () => {
+        const orgs = await db.organizations.toArray()
+        expect(orgs.map((o) => o.name)).toEqual(['Mlimani Secondary'])
+      },
+      { timeout: 8000 },
+    )
+
+    // ...and the admin is signed in, with the new institution in the header.
+    expect(await screen.findByText('Mlimani Secondary', undefined, { timeout: 8000 })).toBeTruthy()
+    expect(await db.rooms.count()).toBe(0)
+    expect(await db.assetTypes.count()).toBe(0)
+  })
+
+  it('refuses a password that does not match its confirmation, without calling the server', async () => {
+    const fetchMock = vi.fn(
+      async (_url: RequestInfo | URL, _init?: RequestInit) => new Response('{}', { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp()
+    fireEvent.click(await screen.findByRole('button', { name: /register an institution/i }))
+    fireEvent.change(await screen.findByLabelText('Institution name'), { target: { value: 'X School' } })
+    fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Someone' } })
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'a@b.tz' } })
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'a-good-password' } })
+    fireEvent.change(screen.getByLabelText(/confirm password/i), { target: { value: 'different' } })
+    fireEvent.click(screen.getByRole('button', { name: /create institution/i }))
+
+    expect(await screen.findByText(/do not match/i)).toBeTruthy()
+    expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes('/register'))).toEqual([])
   })
 })

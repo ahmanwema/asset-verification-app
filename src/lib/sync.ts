@@ -287,3 +287,91 @@ export async function resetLocalData(): Promise<void> {
   await db.delete()
   location.reload()
 }
+
+export interface RegisterInput {
+  orgName: string
+  address: string
+  name: string
+  email: string
+  password: string
+}
+
+export type RegisterResult =
+  | { ok: true; token: string; inspector: ServerAccount; organization: { id: string; name: string } }
+  | { ok: false; error: string }
+
+/**
+ * Registers an institution and its first admin on the sync server.
+ *
+ * Deliberately free of side effects beyond the request: the caller has to
+ * wipe the device and pull the new organization down in the right order, and
+ * storing a token here would have it wiped a moment later.
+ */
+export async function registerOrganization(input: RegisterInput): Promise<RegisterResult> {
+  const base = await getServerUrl()
+  try {
+    const res = await fetch(`${base}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        orgName: input.orgName.trim(),
+        address: input.address.trim(),
+        name: input.name.trim(),
+        email: input.email.trim().toLowerCase(),
+        password: input.password,
+      }),
+    })
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    if (!res.ok) return { ok: false, error: String(data.error ?? 'register-failed') }
+    if (!data.token) return { ok: false, error: 'register-failed' }
+    return {
+      ok: true,
+      token: String(data.token),
+      inspector: data.inspector as ServerAccount,
+      organization: data.organization as { id: string; name: string },
+    }
+  } catch {
+    return { ok: false, error: 'offline' }
+  }
+}
+
+/** Stores the bearer token. Used after registering, where login() is skipped. */
+export async function setToken(token: string): Promise<void> {
+  await setMeta('syncToken', token)
+}
+
+export interface NewAccount {
+  name: string
+  email: string
+  password: string
+  role: Role
+}
+
+/**
+ * Creates a colleague's account on the server, so it works on every device
+ * rather than only the admin's. Returns an error code the caller maps to a
+ * message; 'offline' means the caller should fall back to a local-only
+ * account that will be pushed on the next sync.
+ */
+export async function createTeamAccount(input: NewAccount): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const base = await getServerUrl()
+  const token = await getToken()
+  if (!token) return { ok: false, error: 'not-connected' }
+  try {
+    const res = await fetch(`${base}/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        name: input.name.trim(),
+        email: input.email.trim().toLowerCase(),
+        password: input.password,
+        role: input.role,
+      }),
+    })
+    const data = (await res.json().catch(() => ({}))) as { user?: { id: string }; error?: string }
+    if (!res.ok) return { ok: false, error: data.error ?? 'failed' }
+    return { ok: true, id: data.user?.id ?? '' }
+  } catch {
+    return { ok: false, error: 'offline' }
+  }
+}

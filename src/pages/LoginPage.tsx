@@ -1,9 +1,13 @@
 import { useState } from 'react'
 import { useI18n, useT } from '../i18n'
 import { useOnline, useSession } from '../state/session'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { db } from '../db/db'
+import { sha256 } from '../lib/hash'
 import { SEED_PASSWORD } from '../db/seed'
 import { getToken, login as serverLogin } from '../lib/sync'
 import { Button, Field, TextInput } from '../components/ui'
+import RegisterPage from './RegisterPage'
 
 export default function LoginPage() {
   const t = useT()
@@ -14,6 +18,17 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [registering, setRegistering] = useState(false)
+
+  // The seeded sample is recognisable by its inspectors carrying the sample
+  // password hash; a registered institution has none.
+  const hasSampleData = useLiveQuery(async () => {
+    const hash = await sha256(SEED_PASSWORD)
+    const all = await db.inspectors.toArray()
+    return all.some((i) => i.passwordHash === hash)
+  }, [])
+
+  if (registering) return <RegisterPage onBack={() => setRegistering(false)} />
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -70,11 +85,27 @@ export default function LoginPage() {
           <Button type="submit" full disabled={busy}>
             {busy ? t('common.loading') : t('login.submit')}
           </Button>
+
+          <div className="border-t border-slate-100 pt-3 text-center">
+            <p className="text-xs text-slate-500">{t('register.prompt')}</p>
+            <button
+              type="button"
+              onClick={() => setRegistering(true)}
+              className="mt-1 text-sm font-bold text-brand-700"
+            >
+              {t('register.title')}
+            </button>
+          </div>
         </form>
 
-        <p className="mt-4 text-center text-xs text-slate-500">
-          {t('login.hint')} <code className="rounded bg-slate-200 px-1 font-semibold">{SEED_PASSWORD}</code>
-        </p>
+        {/* The sample password is only worth showing while the sample data is
+            actually there. On a registered institution it is noise at best,
+            and an invitation to try it at worst. */}
+        {hasSampleData && (
+          <p className="mt-4 text-center text-xs text-slate-500">
+            {t('login.hint')} <code className="rounded bg-slate-200 px-1 font-semibold">{SEED_PASSWORD}</code>
+          </p>
+        )}
         <p className="mt-1 text-center text-xs text-slate-400">{t('login.offlineNote')}</p>
 
         <div className="mt-6 text-center">

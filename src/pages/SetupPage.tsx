@@ -4,7 +4,8 @@ import { db, uid } from '../db/db'
 import { sha256 } from '../lib/hash'
 import { deriveCode, deriveRoomCode } from '../lib/tags'
 import { formatBytes, storageEstimate } from '../lib/photos'
-import { resetLocalData } from '../lib/sync'
+import { createTeamAccount, resetLocalData } from '../lib/sync'
+import type { StringKey } from '../i18n/strings'
 import { startFresh } from '../db/seed'
 import {
   VISION_MODELS,
@@ -586,24 +587,44 @@ function TeamTab({ canEdit, flash }: { canEdit: boolean; flash: (m: string) => v
       flash(t('common.required'))
       return
     }
-    if (inspectors.some((i) => i.email.toLowerCase() === e)) {
-      flash(t('common.required'))
+    if (password.length < 8) {
+      flash(t('team.errPassword'))
       return
     }
+    if (inspectors.some((i) => i.email.toLowerCase() === e)) {
+      flash(t('team.errEmailTaken'))
+      return
+    }
+
+    // Create it on the server when we can, so the colleague can sign in from
+    // their own phone straight away rather than only from this device.
+    const remote = await createTeamAccount({ name: n, email: e, password, role })
+    if (!remote.ok && remote.error !== 'offline' && remote.error !== 'not-connected') {
+      const messages: Record<string, StringKey> = {
+        'email-taken': 'team.errEmailTaken',
+        'password-too-short': 'team.errPassword',
+        'admin-only': 'team.errAdminOnly',
+      }
+      flash(t(messages[remote.error] ?? 'sync.failed'))
+      return
+    }
+
     await db.inspectors.add({
-      id: uid('insp_'),
+      id: remote.ok && remote.id ? remote.id : uid('insp_'),
       name: n,
       email: e,
       role,
       active: true,
       passwordHash: await sha256(password),
       updatedAt: Date.now(),
-      syncStatus: 'pending',
+      // A locally created account is pushed up on the next sync; one the
+      // server already has must not be pushed back as a change.
+      syncStatus: remote.ok ? 'synced' : 'pending',
     })
     setName('')
     setEmail('')
     setPassword('')
-    flash(t('entry.saved'))
+    flash(remote.ok ? t('team.addOnServer') : t('team.addLocal'))
   }
 
   async function setPw(id: string, pw: string) {
