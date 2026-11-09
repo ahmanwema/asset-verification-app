@@ -8,11 +8,40 @@
  *
  *   POSTGRES_URL="postgres://…" npm run db:init
  */
+import path from 'node:path'
+import { existsSync, statSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { createStore } from '../api/_lib/store.js'
+
+// Read .env so the connection string can live in a gitignored file rather than
+// a shell history or a CI log. Real environment variables still win.
+try {
+  process.loadEnvFile(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.env'))
+} catch {
+  /* no .env — the variable may come from the environment instead */
+}
 
 const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL || ''
 if (!connectionString) {
-  console.error('Set POSTGRES_URL (or DATABASE_URL) to the pooled connection string first.')
+  // Diagnose without printing any value: the usual causes are an unsaved
+  // editor buffer, a .env in the wrong folder, or a key that was renamed.
+  const envPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.env')
+  console.error('POSTGRES_URL is not set.\n')
+  if (!existsSync(envPath)) {
+    console.error(`No .env found at ${envPath}`)
+  } else {
+    const { mtime, size } = statSync(envPath)
+    console.error(`.env found: ${envPath}`)
+    console.error(`  ${size} bytes, last saved ${mtime.toLocaleString()}`)
+    const names = Object.keys(process.env).filter((k) =>
+      ['POSTGRES_URL', 'DATABASE_URL', 'ADMIN_EMAIL', 'ADMIN_PASSWORD', 'OPENAI_API_KEY'].includes(k),
+    )
+    // Names and emptiness only — never a value, not even a fragment.
+    console.error(
+      `  keys loaded: ${names.length ? names.map((n) => `${n}=${process.env[n] ? 'set' : 'EMPTY'}`).join(', ') : 'none'}`,
+    )
+  }
+  console.error('\nExpected a line of the form  POSTGRES_URL=postgresql://...  with no quotes.')
   process.exit(1)
 }
 
