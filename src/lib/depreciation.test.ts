@@ -4,7 +4,7 @@ import { resetDb, seedFixture, type Fixture } from '../test/fixtures'
 import type { AssetFinancialRecord } from '../types'
 import { saveEntry } from './entries'
 import { buildReportBundle } from './export-excel'
-import { calculateDepreciation, saveFinancialRecord } from './depreciation'
+import { calculateDepreciation, saveFinancialRecord, saveFinancialRecords } from './depreciation'
 
 const record: AssetFinancialRecord = {
   tagNumber: 'PC-001',
@@ -130,5 +130,39 @@ describe('financial records and reports', () => {
     })
 
     expect((await db.entries.get(entry.id))?.financialRecords?.[0].originalCost).toBe(1_200_000)
+  })
+
+  it('applies one purchase batch to many tags while keeping separate records', async () => {
+    const entry = await saveEntry({
+      exerciseId: fx.exercise.id,
+      room: fx.room,
+      floor: fx.floor,
+      assetType: fx.chair,
+      isUnlistedItem: false,
+      quantity: 3,
+      serialNumbers: [],
+      model: '',
+      brand: '',
+      condition: 'G',
+      remarks: '',
+      inspectorId: fx.inspector.id,
+      notPresent: false,
+    })
+    const invoiceTotal = 300_000
+    const unitCost = invoiceTotal / entry.tagNumbers.length
+    await saveFinancialRecords(
+      entry,
+      entry.tagNumbers.map((tagNumber) => ({ ...record, tagNumber, originalCost: unitCost })),
+      fx.inspector.id,
+    )
+
+    const stored = await db.entries.get(entry.id)
+    expect(stored?.financialRecords).toHaveLength(3)
+    expect(stored?.financialRecords?.map((item) => item.tagNumber)).toEqual(entry.tagNumbers)
+    expect(stored?.financialRecords?.reduce((sum, item) => sum + item.originalCost, 0)).toBe(invoiceTotal)
+
+    const bundle = await buildReportBundle(fx.exercise.id)
+    expect(bundle.depreciation).toHaveLength(3)
+    expect(bundle.depreciation.reduce((sum, row) => sum + Number(row['Original Cost']), 0)).toBe(invoiceTotal)
   })
 })

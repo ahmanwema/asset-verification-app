@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
-import { calculateDepreciation, financialRecordComplete, financialRecordFor, saveFinancialRecord } from '../lib/depreciation'
+import { calculateDepreciation, financialRecordComplete, financialRecordFor, saveFinancialRecords } from '../lib/depreciation'
 import { useSession } from '../state/session'
 import { useT } from '../i18n'
 import { Button, Card, EmptyState, Field, Select, StatTile, TextArea, TextInput, Toast } from '../components/ui'
 import type { AssetFinancialRecord } from '../types'
+
+type ApplyScope = 'single' | 'selected'
+type CostMode = 'per_item' | 'invoice_total'
 
 function numeric(value: string): number {
   const parsed = Number(value.replace(/,/g, ''))
@@ -25,6 +28,10 @@ export default function AssetFinancePage() {
   const navigate = useNavigate()
   const { exercise, inspector, isAdmin } = useSession()
   const [loadedKey, setLoadedKey] = useState('')
+  const [applyScope, setApplyScope] = useState<ApplyScope>('single')
+  const [selectedTags, setSelectedTags] = useState<string[]>([])
+  const [costMode, setCostMode] = useState<CostMode>('per_item')
+  const [invoiceTotal, setInvoiceTotal] = useState('')
   const [acquisitionDate, setAcquisitionDate] = useState('')
   const [availableDate, setAvailableDate] = useState('')
   const [cost, setCost] = useState('')
@@ -71,14 +78,28 @@ export default function AssetFinancePage() {
     setInvoice(saved?.invoiceNumber ?? '')
     setFunding(saved?.fundingSource ?? '')
     setNotes(saved?.notes ?? '')
+    setApplyScope('single')
+    setSelectedTags([tag])
+    setCostMode('per_item')
+    setInvoiceTotal('')
     setLoadedKey(`${entryId}|${tag}`)
   }, [data, entryId, tag, saved, loadedKey])
+
+  const targetTags = useMemo(
+    () => applyScope === 'selected'
+      ? (data?.entry.tagNumbers ?? []).filter((item) => selectedTags.includes(item))
+      : tag ? [tag] : [],
+    [applyScope, data?.entry.tagNumbers, selectedTags, tag],
+  )
+  const perItemCost = applyScope === 'selected' && costMode === 'invoice_total'
+    ? numeric(invoiceTotal) / Math.max(1, targetTags.length)
+    : numeric(cost)
 
   const draft = useMemo<AssetFinancialRecord>(() => ({
     tagNumber: tag,
     acquisitionDate,
     availableForUseDate: availableDate,
-    originalCost: numeric(cost),
+    originalCost: perItemCost,
     residualValue: numeric(residual),
     usefulLifeMonths: Math.round(numeric(usefulYears) * 12),
     depreciationMethod: 'diminishing_balance',
@@ -91,12 +112,19 @@ export default function AssetFinancePage() {
     notes: notes.trim(),
     updatedAt: Date.now(),
     updatedBy: inspector?.id ?? '',
-  }), [tag, acquisitionDate, availableDate, cost, residual, usefulYears, annualRate, openingDepreciation, openingDate, supplier, invoice, funding, notes, inspector?.id])
+  }), [tag, acquisitionDate, availableDate, perItemCost, residual, usefulYears, annualRate, openingDepreciation, openingDate, supplier, invoice, funding, notes, inspector?.id])
   const result = calculateDepreciation(draft, exercise?.date ?? new Date().toISOString().slice(0, 10))
 
   async function save(goNext = false) {
     if (!data || !inspector || !isAdmin) return
-    if (!acquisitionDate || !availableDate || numeric(cost) < 0 || numeric(usefulYears) <= 0 || numeric(annualRate) <= 0) {
+    const costWasEntered = applyScope === 'selected' && costMode === 'invoice_total'
+      ? invoiceTotal.trim() !== ''
+      : cost.trim() !== ''
+    if (targetTags.length === 0) {
+      setError(t('finance.selectTagError'))
+      return
+    }
+    if (!acquisitionDate || !availableDate || !costWasEntered || perItemCost < 0 || numeric(usefulYears) <= 0 || numeric(annualRate) <= 0) {
       setError(t('finance.requiredError'))
       return
     }
@@ -104,7 +132,7 @@ export default function AssetFinancePage() {
       setError(t('finance.rateError'))
       return
     }
-    if (numeric(residual) > numeric(cost)) {
+    if (numeric(residual) > perItemCost) {
       setError(t('finance.residualError'))
       return
     }
@@ -116,14 +144,25 @@ export default function AssetFinancePage() {
       setError(t('finance.openingDateError'))
       return
     }
-    if (numeric(openingDepreciation) > numeric(cost) - numeric(residual)) {
+    if (numeric(openingDepreciation) > perItemCost - numeric(residual)) {
       setError(t('finance.openingAmountError'))
       return
     }
     setBusy(true)
     setError('')
     try {
-      await saveFinancialRecord(data.entry, { ...draft, updatedAt: Date.now(), updatedBy: inspector.id }, inspector.id)
+      const savedAt = Date.now()
+      await saveFinancialRecords(
+        data.entry,
+        targetTags.map((targetTag) => ({
+          ...draft,
+          tagNumber: targetTag,
+          originalCost: perItemCost,
+          updatedAt: savedAt,
+          updatedBy: inspector.id,
+        })),
+        inspector.id,
+      )
       if (goNext && exercise) {
         const entries = await db.entries.where('exerciseId').equals(exercise.id).toArray()
         const next = entries
@@ -147,6 +186,7 @@ export default function AssetFinancePage() {
   if (data === undefined) return <p className="text-sm text-slate-500">{t('common.loading')}</p>
   if (data === null || !tag) return <EmptyState title={t('asset.notFound')} />
   const description = data.entry.isUnlistedItem ? (data.entry.unlistedItemName ?? t('entry.unlisted')) : (data.type?.name ?? t('asset.unknown'))
+  const overwriteCount = targetTags.filter((targetTag) => financialRecordFor(data.entry, targetTag)).length
 
   return (
     <div className="space-y-4 pb-4">
@@ -164,6 +204,73 @@ export default function AssetFinancePage() {
 
       {!isAdmin && <Card className="border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{t('finance.adminOnly')}</Card>}
 
+      {isAdmin && data.entry.tagNumbers.length > 1 && (
+        <Card className="space-y-4 border-brand-100 p-4">
+          <div>
+            <h2 className="text-sm font-bold uppercase tracking-wide text-slate-600">{t('finance.applyScope')}</h2>
+            <p className="text-xs text-slate-500">{t('finance.applyScopeHint')}</p>
+          </div>
+          <Field label={t('finance.applyTo')}>
+            <Select
+              value={applyScope}
+              onChange={(event) => {
+                const next = event.target.value as ApplyScope
+                setApplyScope(next)
+                setCostMode('per_item')
+                setInvoiceTotal('')
+                setSelectedTags(next === 'selected' ? data.entry.tagNumbers : [tag])
+              }}
+            >
+              <option value="single">{t('finance.thisTagOnly', { tag })}</option>
+              <option value="selected">{t('finance.multipleTags')}</option>
+            </Select>
+          </Field>
+
+          {applyScope === 'selected' && (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-bold text-slate-700">{t('finance.tagsSelected', { n: targetTags.length })}</p>
+                <div className="flex gap-3 text-xs font-bold text-brand-700">
+                  <button type="button" onClick={() => setSelectedTags(data.entry.tagNumbers)}>{t('finance.selectAll')}</button>
+                  <button type="button" onClick={() => setSelectedTags([tag])}>{t('finance.clearOthers')}</button>
+                </div>
+              </div>
+              <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+                <div className="grid gap-1 sm:grid-cols-2">
+                  {data.entry.tagNumbers.map((item) => (
+                    <label key={item} className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={selectedTags.includes(item)}
+                        disabled={item === tag}
+                        onChange={(event) => setSelectedTags((current) =>
+                          event.target.checked
+                            ? [...new Set([...current, item])]
+                            : current.filter((value) => value !== item),
+                        )}
+                      />
+                      <span className="font-mono font-bold text-slate-800">{item}</span>
+                      {financialRecordFor(data.entry, item) && <span className="ml-auto text-[10px] text-amber-700">{t('finance.hasDetails')}</span>}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <Field label={t('finance.costEntryMode')}>
+                <Select value={costMode} onChange={(event) => setCostMode(event.target.value as CostMode)}>
+                  <option value="per_item">{t('finance.costPerItem')}</option>
+                  <option value="invoice_total">{t('finance.totalInvoiceCost')}</option>
+                </Select>
+              </Field>
+              {overwriteCount > 0 && (
+                <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+                  {t('finance.overwriteWarning', { n: overwriteCount })}
+                </p>
+              )}
+            </>
+          )}
+        </Card>
+      )}
+
       {result.complete && (
         <div className="grid grid-cols-3 gap-2">
           <StatTile label={t('finance.currentDepreciation')} value={money(result.currentPeriodDepreciation)} />
@@ -176,8 +283,16 @@ export default function AssetFinancePage() {
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label={t('finance.acquisitionDate')}><TextInput type="date" value={acquisitionDate} onChange={(e) => { setAcquisitionDate(e.target.value); if (!availableDate) setAvailableDate(e.target.value) }} disabled={!isAdmin} /></Field>
           <Field label={t('finance.availableDate')} hint={t('finance.availableDateHint')}><TextInput type="date" value={availableDate} onChange={(e) => setAvailableDate(e.target.value)} disabled={!isAdmin} /></Field>
-          <Field label={t('finance.originalCost')}><TextInput type="number" min="0" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} disabled={!isAdmin} /></Field>
-          <Field label={t('finance.residualValue')}><TextInput type="number" min="0" step="0.01" value={residual} onChange={(e) => setResidual(e.target.value)} disabled={!isAdmin} /></Field>
+          {applyScope === 'selected' && costMode === 'invoice_total' ? (
+            <Field label={t('finance.totalInvoiceCost')} hint={t('finance.unitCostCalculated', { amount: money(perItemCost), n: targetTags.length })}>
+              <TextInput type="number" min="0" step="0.01" value={invoiceTotal} onChange={(e) => setInvoiceTotal(e.target.value)} disabled={!isAdmin} />
+            </Field>
+          ) : (
+            <Field label={applyScope === 'selected' ? t('finance.costPerItem') : t('finance.originalCost')}>
+              <TextInput type="number" min="0" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} disabled={!isAdmin} />
+            </Field>
+          )}
+          <Field label={applyScope === 'selected' ? t('finance.residualPerItem') : t('finance.residualValue')}><TextInput type="number" min="0" step="0.01" value={residual} onChange={(e) => setResidual(e.target.value)} disabled={!isAdmin} /></Field>
           <Field label={t('finance.usefulLife')} hint={t('finance.usefulLifeHint')}><TextInput type="number" min="0.1" step="0.5" value={usefulYears} onChange={(e) => setUsefulYears(e.target.value)} disabled={!isAdmin} /></Field>
           <Field label={t('finance.rate')} hint={t('finance.rateHint')}><TextInput type="number" min="0.01" max="100" step="0.01" value={annualRate} onChange={(e) => setAnnualRate(e.target.value)} disabled={!isAdmin} /></Field>
           <Field label={t('finance.method')}><Select value="diminishing_balance" disabled><option value="diminishing_balance">{t('finance.diminishingBalance')}</option></Select></Field>
@@ -190,7 +305,7 @@ export default function AssetFinancePage() {
           <p className="text-xs text-slate-500">{t('finance.openingBalanceHint')}</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label={t('finance.openingDepreciation')}><TextInput type="number" min="0" step="0.01" value={openingDepreciation} onChange={(e) => setOpeningDepreciation(e.target.value)} disabled={!isAdmin} /></Field>
+          <Field label={applyScope === 'selected' ? t('finance.openingDepreciationPerItem') : t('finance.openingDepreciation')}><TextInput type="number" min="0" step="0.01" value={openingDepreciation} onChange={(e) => setOpeningDepreciation(e.target.value)} disabled={!isAdmin} /></Field>
           <Field label={t('finance.openingDate')}><TextInput type="date" value={openingDate} onChange={(e) => setOpeningDate(e.target.value)} disabled={!isAdmin} /></Field>
         </div>
       </Card>
@@ -206,7 +321,9 @@ export default function AssetFinancePage() {
       {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
       {isAdmin && (
         <div className="flex gap-2">
-          <Button variant="secondary" full onClick={() => void save(false)} disabled={busy}>{t('common.save')}</Button>
+          <Button variant="secondary" full onClick={() => void save(false)} disabled={busy}>
+            {targetTags.length > 1 ? t('finance.saveSelected', { n: targetTags.length }) : t('common.save')}
+          </Button>
           <Button full onClick={() => void save(true)} disabled={busy}>{busy ? t('common.loading') : t('finance.saveNext')}</Button>
         </div>
       )}

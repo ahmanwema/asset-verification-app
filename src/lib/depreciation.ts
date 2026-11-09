@@ -107,22 +107,50 @@ export async function saveFinancialRecord(
   record: AssetFinancialRecord,
   actorId: string,
 ): Promise<void> {
-  const records = [...(entry.financialRecords ?? [])]
-  const index = records.findIndex((item) => item.tagNumber === record.tagNumber)
-  const before = index >= 0 ? records[index] : undefined
-  if (index >= 0) records[index] = record
-  else records.push(record)
+  await saveFinancialRecords(entry, [record], actorId)
+}
 
-  const summary = (item: AssetFinancialRecord | undefined) =>
-    item ? `${item.originalCost}|${item.availableForUseDate}|${item.usefulLifeMonths}|${item.annualDepreciationRate}` : ''
-  const history = summary(before) === summary(record)
+/** Writes a purchase batch in one IndexedDB update, so sync never sees half a batch. */
+export async function saveFinancialRecords(
+  entry: InspectionEntry,
+  incoming: AssetFinancialRecord[],
+  actorId: string,
+): Promise<void> {
+  const records = [...(entry.financialRecords ?? [])]
+  const summary = (item: AssetFinancialRecord | undefined) => item
+    ? JSON.stringify({
+        acquisitionDate: item.acquisitionDate,
+        availableForUseDate: item.availableForUseDate,
+        originalCost: item.originalCost,
+        residualValue: item.residualValue,
+        usefulLifeMonths: item.usefulLifeMonths,
+        depreciationMethod: item.depreciationMethod,
+        annualDepreciationRate: item.annualDepreciationRate,
+        openingAccumulatedDepreciation: item.openingAccumulatedDepreciation,
+        openingBalanceDate: item.openingBalanceDate,
+        supplier: item.supplier,
+        invoiceNumber: item.invoiceNumber,
+        fundingSource: item.fundingSource,
+        notes: item.notes,
+      })
+    : ''
+  let changed = false
+  for (const record of incoming) {
+    const index = records.findIndex((item) => item.tagNumber === record.tagNumber)
+    const before = index >= 0 ? records[index] : undefined
+    if (summary(before) !== summary(record)) changed = true
+    if (index >= 0) records[index] = record
+    else records.push(record)
+  }
+
+  const history = !changed
     ? (entry.editHistory ?? [])
     : [
         ...(entry.editHistory ?? []),
         {
           field: 'financialDetails',
-          oldValue: summary(before),
-          newValue: summary(record),
+          oldValue: incoming.length === 1 ? summary(financialRecordFor(entry, incoming[0].tagNumber)) : '',
+          newValue: incoming.length === 1 ? summary(incoming[0]) : `Batch: ${incoming.length} assets`,
           editedBy: actorId,
           editedAt: Date.now(),
         },
