@@ -148,6 +148,7 @@ export const en = {
   'team.errPassword': 'The password must be at least 8 characters',
   'team.errAdminOnly': 'Only an administrator can add accounts',
 
+  'sync.wasDeleted': 'Deleted',
   'sync.notConnected': 'This device is not connected to the server',
   'sync.notConnectedHint': 'Sign in below to upload and receive work.',
   'sync.notConnectedPending':
@@ -449,6 +450,7 @@ export const sw: Record<StringKey, string> = {
   'team.errPassword': 'Password lazima iwe na angalau herufi 8',
   'team.errAdminOnly': 'Msimamizi pekee ndiye anayeweza kuongeza akaunti',
 
+  'sync.wasDeleted': 'Imefutwa',
   'sync.notConnected': 'Kifaa hiki hakijaunganishwa na server',
   'sync.notConnectedHint': 'Ingia hapa chini ili kupeleka na kupokea kazi.',
   'sync.notConnectedPending':

@@ -240,9 +240,16 @@ function ConflictCard({
       <div className="grid grid-cols-2 gap-2 text-xs">
         <div className="rounded-xl border-2 border-brand-600 bg-brand-50 p-2">
           <p className="mb-1 font-bold text-brand-800">{t('sync.keepMine')}</p>
-          <p className="font-bold tabular-nums">
-            {entry.quantity}× {t(`condition.${entry.condition}`)}
-          </p>
+          {/* A deleted copy showed as a normal quantity, so "keep theirs" on a
+              deletion looked like keeping the item. Say which side is a
+              deletion — it is the one choice that is hard to undo. */}
+          {entry.deleted ? (
+            <p className="font-bold text-red-700">{t('sync.wasDeleted')}</p>
+          ) : (
+            <p className="font-bold tabular-nums">
+              {entry.quantity}× {t(`condition.${entry.condition}`)}
+            </p>
+          )}
           <p className="text-slate-600">{names?.get(entry.inspectorId) ?? ''}</p>
           <p className="text-slate-500">{new Date(entry.updatedAt).toLocaleString()}</p>
         </div>
@@ -250,9 +257,13 @@ function ConflictCard({
           <p className="mb-1 font-bold text-slate-700">{t('sync.keepTheirs')}</p>
           {theirs ? (
             <>
-              <p className="font-bold tabular-nums">
-                {theirs.quantity}× {t(`condition.${theirs.condition}`)}
-              </p>
+              {theirs.deleted ? (
+                <p className="font-bold text-red-700">{t('sync.wasDeleted')}</p>
+              ) : (
+                <p className="font-bold tabular-nums">
+                  {theirs.quantity}× {t(`condition.${theirs.condition}`)}
+                </p>
+              )}
               <p className="text-slate-600">{names?.get(theirs.inspectorId) ?? ''}</p>
               <p className="text-slate-500">{new Date(theirs.updatedAt).toLocaleString()}</p>
             </>
