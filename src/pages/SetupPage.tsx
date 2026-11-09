@@ -455,7 +455,7 @@ function AssetsTab({ canEdit, orgId, flash }: { canEdit: boolean; orgId?: string
   async function add() {
     const n = name.trim()
     if (!n || !orgId) return
-    const c = (code.trim() || deriveCode(n, 2)).toUpperCase()
+    const c = (code.trim() || deriveCode(n)).toUpperCase()
     if (assetTypes.some((a) => a.code === c)) {
       flash(`${t('common.code')} ${c} — ${t('common.required')}`)
       return
@@ -551,10 +551,11 @@ function AssetsTab({ canEdit, orgId, flash }: { canEdit: boolean; orgId?: string
           <div className="flex gap-2">
             <TextInput placeholder={t('common.name')} value={name} onChange={(e) => setName(e.target.value)} />
             <TextInput
-              placeholder={t('common.code')}
+              placeholder={name.trim() ? deriveCode(name.trim()) : t('common.code')}
               value={code}
               onChange={(e) => setCode(e.target.value.toUpperCase())}
               className="w-20 text-center font-mono"
+              aria-label={t('common.code')}
             />
           </div>
           <Button full onClick={() => void add()}>

@@ -24,6 +24,11 @@ describe('tag format', () => {
   it('derives short codes for unlisted items and rooms', () => {
     expect(deriveCode('Projector Stand')).toBe('PS')
     expect(deriveCode('Kettle')).toBe('KET')
+    // A catalog asset type and an unlisted item of the same name must derive
+    // the same code, or one kind of thing ends up with two tag prefixes.
+    expect(deriveCode('Chair')).toBe('CHA')
+    expect(deriveCode('Table')).toBe('TAB')
+    expect(deriveCode('Student Chair')).toBe('SC')
     expect(deriveRoomCode('P3')).toBe('P3')
     expect(deriveRoomCode('Lab Biology Office')).toBe('LBO')
   })
