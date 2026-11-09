@@ -25,21 +25,32 @@ function amountThrough(record: AssetFinancialRecord, asOfDate: string): number {
   if (asOf === null || start === null || asOf < start || record.usefulLifeMonths <= 0) return 0
 
   const cap = Math.max(0, record.originalCost - record.residualValue)
-  const annual = cap / (record.usefulLifeMonths / 12)
+  const rate = record.annualDepreciationRate / 100
   const openingDate = dateValue(record.openingBalanceDate)
   const opening = Math.min(cap, Math.max(0, record.openingAccumulatedDepreciation || 0))
+
+  if (!(rate > 0 && rate <= 1)) return 0
 
   if (openingDate !== null && openingDate >= start) {
     if (asOf <= openingDate) return opening
     const elapsedDays = (asOf - openingDate) / DAY_MS
-    return Math.min(cap, opening + annual * (elapsedDays / YEAR_DAYS))
+    const openingCarryingAmount = Math.max(record.residualValue, record.originalCost - opening)
+    const carryingAmount = Math.max(
+      record.residualValue,
+      openingCarryingAmount * Math.pow(1 - rate, elapsedDays / YEAR_DAYS),
+    )
+    return Math.min(cap, record.originalCost - carryingAmount)
   }
 
   const elapsedDays = (asOf - start) / DAY_MS
-  return Math.min(cap, annual * (elapsedDays / YEAR_DAYS))
+  const carryingAmount = Math.max(
+    record.residualValue,
+    record.originalCost * Math.pow(1 - rate, elapsedDays / YEAR_DAYS),
+  )
+  return Math.min(cap, record.originalCost - carryingAmount)
 }
 
-/** Straight-line estimate. The institution's approved policy remains authoritative. */
+/** Fixed-rate diminishing-balance estimate. The approved policy remains authoritative. */
 export function calculateDepreciation(
   record: AssetFinancialRecord | undefined,
   asOfDate: string,
@@ -49,6 +60,8 @@ export function calculateDepreciation(
       record.availableForUseDate &&
       record.originalCost >= 0 &&
       record.usefulLifeMonths > 0 &&
+      record.annualDepreciationRate > 0 &&
+      record.annualDepreciationRate <= 100 &&
       record.residualValue >= 0 &&
       record.residualValue <= record.originalCost,
   )
@@ -82,6 +95,8 @@ export function financialRecordComplete(record: AssetFinancialRecord | undefined
       record.availableForUseDate &&
       record.originalCost >= 0 &&
       record.usefulLifeMonths > 0 &&
+      record.annualDepreciationRate > 0 &&
+      record.annualDepreciationRate <= 100 &&
       record.residualValue >= 0 &&
       record.residualValue <= record.originalCost,
   )
@@ -99,7 +114,7 @@ export async function saveFinancialRecord(
   else records.push(record)
 
   const summary = (item: AssetFinancialRecord | undefined) =>
-    item ? `${item.originalCost}|${item.availableForUseDate}|${item.usefulLifeMonths}` : ''
+    item ? `${item.originalCost}|${item.availableForUseDate}|${item.usefulLifeMonths}|${item.annualDepreciationRate}` : ''
   const history = summary(before) === summary(record)
     ? (entry.editHistory ?? [])
     : [

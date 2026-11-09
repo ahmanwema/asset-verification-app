@@ -5,7 +5,7 @@ export type Condition = 'G' | 'F' | 'P' | 'U'
 export type Role = 'admin' | 'inspector'
 export type ExerciseStatus = 'draft' | 'active' | 'completed'
 export type Lang = 'en' | 'sw'
-export type DepreciationMethod = 'straight_line'
+export type DepreciationMethod = 'diminishing_balance'
 
 export const CONDITIONS: Condition[] = ['G', 'F', 'P', 'U']
 
@@ -110,6 +110,8 @@ export interface AssetFinancialRecord {
   residualValue: number
   usefulLifeMonths: number
   depreciationMethod: DepreciationMethod
+  /** Fixed annual reducing-balance rate, expressed as a percentage (e.g. 25). */
+  annualDepreciationRate: number
   openingAccumulatedDepreciation: number
   openingBalanceDate: string
   supplier: string

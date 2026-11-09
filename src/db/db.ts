@@ -84,6 +84,27 @@ export class AssetDB extends Dexie {
             entry.financialRecords ??= []
           })
       })
+
+    // v5 replaces the provisional straight-line calculation with the
+    // institution's diminishing-balance policy. A rate is deliberately not
+    // guessed: an accountant must enter the approved percentage.
+    this.version(5)
+      .stores({})
+      .upgrade(async (tx) => {
+        await tx
+          .table('entries')
+          .toCollection()
+          .modify((entry: Record<string, unknown>) => {
+            const records = Array.isArray(entry.financialRecords)
+              ? (entry.financialRecords as Array<Record<string, unknown>>)
+              : []
+            entry.financialRecords = records.map((record) => ({
+              ...record,
+              depreciationMethod: 'diminishing_balance',
+              annualDepreciationRate: Number(record.annualDepreciationRate || 0),
+            }))
+          })
+      })
   }
 }
 

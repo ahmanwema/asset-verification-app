@@ -13,7 +13,8 @@ const record: AssetFinancialRecord = {
   originalCost: 1_200_000,
   residualValue: 0,
   usefulLifeMonths: 48,
-  depreciationMethod: 'straight_line',
+  depreciationMethod: 'diminishing_balance',
+  annualDepreciationRate: 25,
   openingAccumulatedDepreciation: 0,
   openingBalanceDate: '',
   supplier: '',
@@ -24,12 +25,12 @@ const record: AssetFinancialRecord = {
   updatedBy: 'admin',
 }
 
-describe('straight-line depreciation', () => {
+describe('diminishing-balance depreciation', () => {
   it('calculates accumulated depreciation and net book value', () => {
     const result = calculateDepreciation(record, '2026-01-01')
     expect(result.complete).toBe(true)
-    expect(result.accumulatedDepreciation).toBeCloseTo(600_000, -3)
-    expect(result.carryingAmount).toBeCloseTo(600_000, -3)
+    expect(result.accumulatedDepreciation).toBeCloseTo(525_000, -3)
+    expect(result.carryingAmount).toBeCloseTo(675_000, -3)
   })
 
   it('never depreciates below residual value', () => {
@@ -43,11 +44,12 @@ describe('straight-line depreciation', () => {
       { ...record, openingAccumulatedDepreciation: 450_000, openingBalanceDate: '2026-01-01' },
       '2027-01-01',
     )
-    expect(result.accumulatedDepreciation).toBeCloseTo(750_000, -3)
+    expect(result.accumulatedDepreciation).toBeCloseTo(637_500, -3)
   })
 
   it('marks incomplete records instead of inventing a value', () => {
     expect(calculateDepreciation({ ...record, availableForUseDate: '' }, '2026-01-01').complete).toBe(false)
+    expect(calculateDepreciation({ ...record, annualDepreciationRate: 0 }, '2026-01-01').complete).toBe(false)
   })
 })
 

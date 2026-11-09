@@ -30,6 +30,7 @@ export default function AssetFinancePage() {
   const [cost, setCost] = useState('')
   const [residual, setResidual] = useState('0')
   const [usefulYears, setUsefulYears] = useState('')
+  const [annualRate, setAnnualRate] = useState('')
   const [openingDepreciation, setOpeningDepreciation] = useState('0')
   const [openingDate, setOpeningDate] = useState('')
   const [supplier, setSupplier] = useState('')
@@ -63,6 +64,7 @@ export default function AssetFinancePage() {
     setCost(saved ? String(saved.originalCost) : '')
     setResidual(saved ? String(saved.residualValue) : '0')
     setUsefulYears(saved?.usefulLifeMonths ? String(saved.usefulLifeMonths / 12) : '')
+    setAnnualRate(saved?.annualDepreciationRate ? String(saved.annualDepreciationRate) : '')
     setOpeningDepreciation(saved ? String(saved.openingAccumulatedDepreciation) : '0')
     setOpeningDate(saved?.openingBalanceDate ?? '')
     setSupplier(saved?.supplier ?? '')
@@ -79,7 +81,8 @@ export default function AssetFinancePage() {
     originalCost: numeric(cost),
     residualValue: numeric(residual),
     usefulLifeMonths: Math.round(numeric(usefulYears) * 12),
-    depreciationMethod: 'straight_line',
+    depreciationMethod: 'diminishing_balance',
+    annualDepreciationRate: numeric(annualRate),
     openingAccumulatedDepreciation: numeric(openingDepreciation),
     openingBalanceDate: openingDate,
     supplier: supplier.trim(),
@@ -88,13 +91,17 @@ export default function AssetFinancePage() {
     notes: notes.trim(),
     updatedAt: Date.now(),
     updatedBy: inspector?.id ?? '',
-  }), [tag, acquisitionDate, availableDate, cost, residual, usefulYears, openingDepreciation, openingDate, supplier, invoice, funding, notes, inspector?.id])
+  }), [tag, acquisitionDate, availableDate, cost, residual, usefulYears, annualRate, openingDepreciation, openingDate, supplier, invoice, funding, notes, inspector?.id])
   const result = calculateDepreciation(draft, exercise?.date ?? new Date().toISOString().slice(0, 10))
 
   async function save(goNext = false) {
     if (!data || !inspector || !isAdmin) return
-    if (!acquisitionDate || !availableDate || numeric(cost) < 0 || numeric(usefulYears) <= 0) {
+    if (!acquisitionDate || !availableDate || numeric(cost) < 0 || numeric(usefulYears) <= 0 || numeric(annualRate) <= 0) {
       setError(t('finance.requiredError'))
+      return
+    }
+    if (numeric(annualRate) > 100) {
+      setError(t('finance.rateError'))
       return
     }
     if (numeric(residual) > numeric(cost)) {
@@ -172,7 +179,8 @@ export default function AssetFinancePage() {
           <Field label={t('finance.originalCost')}><TextInput type="number" min="0" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} disabled={!isAdmin} /></Field>
           <Field label={t('finance.residualValue')}><TextInput type="number" min="0" step="0.01" value={residual} onChange={(e) => setResidual(e.target.value)} disabled={!isAdmin} /></Field>
           <Field label={t('finance.usefulLife')} hint={t('finance.usefulLifeHint')}><TextInput type="number" min="0.1" step="0.5" value={usefulYears} onChange={(e) => setUsefulYears(e.target.value)} disabled={!isAdmin} /></Field>
-          <Field label={t('finance.method')}><Select value="straight_line" disabled><option value="straight_line">{t('finance.straightLine')}</option></Select></Field>
+          <Field label={t('finance.rate')} hint={t('finance.rateHint')}><TextInput type="number" min="0.01" max="100" step="0.01" value={annualRate} onChange={(e) => setAnnualRate(e.target.value)} disabled={!isAdmin} /></Field>
+          <Field label={t('finance.method')}><Select value="diminishing_balance" disabled><option value="diminishing_balance">{t('finance.diminishingBalance')}</option></Select></Field>
         </div>
       </Card>
 
