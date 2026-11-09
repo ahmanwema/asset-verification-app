@@ -1,6 +1,6 @@
 import { db, getMeta, setMeta } from '../db/db'
 import { bytesToBase64 } from './photos'
-import type { InspectionEntry } from '../types'
+import type { InspectionEntry, Role } from '../types'
 
 export const SYNC_TABLES = [
   'organizations',
@@ -85,7 +85,21 @@ export async function pendingRoomCount(exerciseId: string): Promise<number> {
   return rooms.size
 }
 
-export async function login(email: string, password: string): Promise<boolean> {
+export interface ServerAccount {
+  id: string
+  name: string
+  email: string
+  role: Role
+}
+
+/**
+ * Signs in against the sync server and stores the bearer token.
+ *
+ * Returns the account the server knows about, so the caller can create a local
+ * record for it: a device that has never synced holds no accounts at all, and
+ * an inspector's first sign-in on a new phone has to come from somewhere.
+ */
+export async function login(email: string, password: string): Promise<ServerAccount | null> {
   const base = await getServerUrl()
   try {
     const res = await fetch(`${base}/login`, {
@@ -93,13 +107,20 @@ export async function login(email: string, password: string): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
     })
-    if (!res.ok) return false
-    const data = (await res.json()) as { token?: string }
-    if (!data.token) return false
+    if (!res.ok) return null
+    const data = (await res.json()) as { token?: string; inspector?: ServerAccount }
+    if (!data.token) return null
     await setMeta('syncToken', data.token)
-    return true
+    return (
+      data.inspector ?? {
+        id: `usr_${email.trim().toLowerCase()}`,
+        name: email.trim(),
+        email: email.trim().toLowerCase(),
+        role: 'inspector',
+      }
+    )
   } catch {
-    return false
+    return null
   }
 }
 

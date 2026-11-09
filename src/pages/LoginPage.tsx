@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useI18n, useT } from '../i18n'
 import { useOnline, useSession } from '../state/session'
 import { SEED_PASSWORD } from '../db/seed'
-import { login as serverLogin } from '../lib/sync'
+import { getToken, login as serverLogin } from '../lib/sync'
 import { Button, Field, TextInput } from '../components/ui'
 
 export default function LoginPage() {
@@ -25,8 +25,10 @@ export default function LoginPage() {
       setBusy(false)
       return
     }
-    // Grab a sync token while we still hold the plaintext password and have signal.
-    if (online) void serverLogin(email, password)
+    // Grab a sync token while we still hold the plaintext password and have
+    // signal. Skipped when the session already got one by authenticating
+    // against the server, which is what happens on a device with no accounts.
+    if (online && !(await getToken())) void serverLogin(email, password)
     setBusy(false)
   }
 

@@ -364,3 +364,77 @@ describe('starting fresh', () => {
     expect(await db.rooms.count()).toBe(0)
   })
 })
+
+describe('signing in on a device with no accounts', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('falls back to the server, then works offline afterwards', async () => {
+    // A phone that has never synced — or one that was just wiped.
+    await startFresh()
+    expect(await db.inspectors.count()).toBe(0)
+
+    const fetchMock = vi.fn(
+      async (_url: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            token: 'server-token',
+            inspector: { id: 'usr_1', name: 'Aman Wema', email: 'admin@sufa.ac.tz', role: 'admin' },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp()
+    fireEvent.change(await screen.findByLabelText(/email/i), { target: { value: 'admin@sufa.ac.tz' } })
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'real-server-password' } })
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }))
+
+    // The account now exists on the device, written from the server's answer.
+    await waitFor(
+      async () => {
+        const [who] = await db.inspectors.toArray()
+        expect(who?.email).toBe('admin@sufa.ac.tz')
+        expect(who?.role).toBe('admin')
+        expect(who?.passwordHash).toBeTruthy() // so the next sign-in needs no signal
+      },
+      { timeout: 5000 },
+    )
+    // ...and the sign-in form is gone. There is no exercise yet on a fresh
+    // device, so the app lands on an empty state rather than a floor list.
+    await waitFor(() => expect(screen.queryByRole('button', { name: /sign in/i })).toBeNull())
+
+    // Exactly one round trip: the session's own sign-in. The page must not
+    // then ask again for a token it already holds.
+    const loginCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes('/login'))
+    expect(loginCalls).toHaveLength(1)
+  })
+
+  it('signs in from the device alone when the network is unreachable', async () => {
+    // Every request fails, as it would in a classroom with no signal.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    )
+
+    await signIn() // seeded account, correct password
+    expect(await screen.findByText('Ground Floor')).toBeTruthy()
+  })
+
+  it('still refuses a wrong password when the server refuses it too', async () => {
+    await startFresh()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"invalid-credentials"}', { status: 401 })))
+
+    renderApp()
+    fireEvent.change(await screen.findByLabelText(/email/i), { target: { value: 'admin@sufa.ac.tz' } })
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'nope' } })
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }))
+
+    expect(await screen.findByText(/wrong email or password/i)).toBeTruthy()
+    expect(await db.inspectors.count()).toBe(0)
+  })
+})

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { db, getMeta, setMeta } from '../db/db'
+import { db, getMeta, setMeta, uid } from '../db/db'
 import { sha256 } from '../lib/hash'
+import { login as serverLogin } from '../lib/sync'
 import type { Exercise, Inspector } from '../types'
 
 const SESSION_KEY = 'av.session.inspectorId'
@@ -48,22 +49,62 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     void refresh()
   }, [refresh])
 
-  const login = useCallback(async (email: string, password: string) => {
-    const normalized = email.trim().toLowerCase()
-    const all = await db.inspectors.toArray()
-    const found = all.find((i) => i.email.toLowerCase() === normalized && i.active)
-    if (!found) return false
-    const hash = await sha256(password)
-    if (found.passwordHash && found.passwordHash !== hash) return false
-    if (!found.passwordHash) return false
+  const startSession = useCallback((who: Inspector) => {
     try {
-      localStorage.setItem(SESSION_KEY, found.id)
+      localStorage.setItem(SESSION_KEY, who.id)
     } catch {
       /* ignore */
     }
-    setInspector(found)
-    return true
+    setInspector(who)
   }, [])
+
+  /**
+   * Sign-in is offline-first: the device is asked before the network, so an
+   * inspector in a basement classroom with no signal still gets in.
+   *
+   * It falls back to the sync server when the device cannot answer — a phone
+   * that has never synced holds no accounts at all, so without this a new
+   * device could never be used, and wiping a device would lock its owner out
+   * permanently. On success the account is written locally with the same hash
+   * the offline path checks, so every later sign-in works with no signal.
+   */
+  const login = useCallback(
+    async (email: string, password: string) => {
+      const normalized = email.trim().toLowerCase()
+      const hash = await sha256(password)
+
+      const all = await db.inspectors.toArray()
+      const found = all.find((i) => i.email.toLowerCase() === normalized && i.active)
+      if (found?.passwordHash && found.passwordHash === hash) {
+        startSession(found)
+        return true
+      }
+
+      // A wrong password for a known account should not silently ask the
+      // server, unless the server is the only thing that can answer.
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return false
+
+      const account = await serverLogin(normalized, password)
+      if (!account) return false
+
+      const existing = all.find((i) => i.email.toLowerCase() === account.email.toLowerCase())
+      const who: Inspector = {
+        id: existing?.id ?? account.id ?? uid('insp_'),
+        name: account.name || normalized,
+        email: account.email || normalized,
+        role: account.role === 'admin' ? 'admin' : 'inspector',
+        active: true,
+        passwordHash: hash,
+        updatedAt: Date.now(),
+        // It came from the server, so it is not something to push back up.
+        syncStatus: 'synced',
+      }
+      await db.inspectors.put(who)
+      startSession(who)
+      return true
+    },
+    [startSession],
+  )
 
   const logout = useCallback(() => {
     try {
