@@ -4,7 +4,7 @@ import { db, uid } from '../db/db'
 import { sha256 } from '../lib/hash'
 import { deriveCode, deriveRoomCode } from '../lib/tags'
 import { formatBytes, storageEstimate } from '../lib/photos'
-import { createTeamAccount, getToken, resetLocalData } from '../lib/sync'
+import { createTeamAccount, getToken, resetLocalData, syncDiagnostics } from '../lib/sync'
 import type { StringKey } from '../i18n/strings'
 import { startFresh } from '../db/seed'
 import {
@@ -830,6 +830,8 @@ function DataTab() {
         )}
       </Card>
 
+      <DiagnosticsCard />
+
       <VisionSettings />
 
       <div className="space-y-2">
@@ -861,5 +863,44 @@ function DataTab() {
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Shows exactly what this device holds, for when two devices disagree and
+ * nothing on either screen explains why.
+ */
+function DiagnosticsCard() {
+  const t = useT()
+  const [text, setText] = useState('')
+
+  return (
+    <Card className="space-y-2 p-3">
+      <SectionTitle>{t('setup.diagnostics')}</SectionTitle>
+      <p className="text-xs text-slate-500">{t('setup.diagnosticsHint')}</p>
+      <Button
+        variant="secondary"
+        full
+        onClick={async () => {
+          const report = await syncDiagnostics()
+          setText(report)
+          try {
+            await navigator.clipboard.writeText(report)
+          } catch {
+            /* no clipboard permission; the text is on screen to copy by hand */
+          }
+        }}
+      >
+        {t('setup.diagnosticsRun')}
+      </Button>
+      {text && (
+        <textarea
+          readOnly
+          value={text}
+          onFocus={(e) => e.currentTarget.select()}
+          className="field-input h-48 w-full font-mono text-[10px] leading-tight"
+        />
+      )}
+    </Card>
   )
 }

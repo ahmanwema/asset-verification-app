@@ -157,6 +157,10 @@ export const en = {
   'sync.notConnectedPending':
     '{n} saved here and waiting. Nothing is lost — sign in below and it uploads. Do not clear the browser data for this site first.',
   'setup.build': 'App version',
+  'setup.diagnostics': 'Sync diagnostics',
+  'setup.diagnosticsHint':
+    'What this device holds. Copy it and send it when two devices disagree. Contains no passwords and nothing you typed.',
+  'setup.diagnosticsRun': 'Copy diagnostics',
   'sync.lastFailed': 'Last sync failed',
 
   'convert.title': 'Move to an asset type',
@@ -462,6 +466,10 @@ export const sw: Record<StringKey, string> = {
   'sync.notConnectedPending':
     'Vitu {n} vimehifadhiwa hapa vinasubiri. Hakuna kilichopotea — ingia hapa chini navyo vitapanda. Usifute browsing data ya tovuti hii kabla ya hapo.',
   'setup.build': 'Toleo la app',
+  'setup.diagnostics': 'Uchunguzi wa sync',
+  'setup.diagnosticsHint':
+    'Kilichomo kwenye kifaa hiki. Nakili na utume pale vifaa viwili vinapotofautiana. Hakuna password wala ulichoandika.',
+  'setup.diagnosticsRun': 'Nakili uchunguzi',
   'sync.lastFailed': 'Sync ya mwisho imeshindwa',
 
   'convert.title': 'Hamishia kwenye aina ya mali',

@@ -469,3 +469,57 @@ export async function resyncEverything(): Promise<SyncResult> {
   await setMeta('lastSyncAt', 0)
   return syncNow()
 }
+
+/**
+ * A snapshot of this device's sync state, safe to share.
+ *
+ * Three bugs in a row were diagnosed by querying the database behind the
+ * user's back, because the device could not say what it held. It can now.
+ * Deliberately excludes the token and anything an inspector typed — ids,
+ * counts, timestamps and sync flags only.
+ */
+export async function syncDiagnostics(): Promise<string> {
+  const [serverUrl, token, lastSyncAt, lastError] = await Promise.all([
+    getServerUrl(),
+    getToken(),
+    getMeta<number>('lastSyncAt', 0),
+    lastSyncError(),
+  ])
+
+  const tables: Record<string, unknown> = {}
+  for (const t of SYNC_TABLES) {
+    const rows = await tableFor(t).where('syncStatus').equals('pending').toArray()
+    const all = (await (db[t] as unknown as { toArray: () => Promise<AnyRecord[]> }).toArray()) ?? []
+    tables[t] = {
+      total: all.length,
+      pending: rows.length,
+      newest: all.reduce((max, r) => Math.max(max, Number(r.updatedAt) || 0), 0),
+    }
+  }
+
+  const entries = await db.entries.toArray()
+  return JSON.stringify(
+    {
+      build: typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'unknown',
+      serverUrl,
+      connected: Boolean(token),
+      lastSyncAt,
+      lastSyncAtReadable: lastSyncAt ? new Date(lastSyncAt).toISOString() : null,
+      lastError,
+      online: typeof navigator === 'undefined' ? null : navigator.onLine,
+      tables,
+      entries: entries.map((e) => ({
+        id: e.id.slice(-10),
+        room: e.roomId.slice(-10),
+        assetType: e.assetTypeId ? e.assetTypeId.slice(-10) : null,
+        unlisted: e.isUnlistedItem,
+        qty: e.quantity,
+        deleted: e.deleted,
+        sync: e.syncStatus,
+        updatedAt: new Date(e.updatedAt).toISOString(),
+      })),
+    },
+    null,
+    2,
+  )
+}
