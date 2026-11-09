@@ -368,10 +368,18 @@ export default function EntryPage() {
     })
 
     if (!outcome.ok) {
+      // "Could not identify" told nobody anything — including me, when the
+      // user reported a failure I then could not reproduce. Each cause now
+      // says what it was and what to do about it.
       const messages: Record<string, StringKey> = {
         offline: 'ai.offline',
         'not-connected': 'ai.notConnected',
         'vision-not-configured': 'ai.notConfigured',
+        'vision-timeout': 'ai.timeout',
+        'vision-unreachable': 'ai.unreachable',
+        'vision-upstream': 'ai.upstream',
+        'vision-bad-response': 'ai.badResponse',
+        unauthorized: 'ai.notConnected',
       }
       flash(t(messages[outcome.error] ?? 'ai.failed'))
       return

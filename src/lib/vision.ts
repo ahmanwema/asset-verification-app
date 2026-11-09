@@ -37,7 +37,7 @@ export type VisionError =
 
 export type VisionOutcome =
   | { ok: true; result: VisionResult; model: string }
-  | { ok: false; error: VisionError }
+  | { ok: false; error: VisionError; upstreamStatus?: number }
 
 export interface VisionAvailability {
   configured: boolean
@@ -127,7 +127,7 @@ export async function identifyPhoto(
     })
 
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string }
+      const body = (await res.json().catch(() => ({}))) as { error?: string; upstreamStatus?: number }
       const known: VisionError[] = [
         'vision-not-configured',
         'vision-timeout',
@@ -137,10 +137,19 @@ export async function identifyPhoto(
         'unauthorized',
       ]
       const error = known.find((e) => e === body.error) ?? 'failed'
-      return { ok: false, error }
+      // Kept so the inspector, and anyone they ask for help, can see what
+      // actually went wrong instead of "could not identify".
+      await setMeta(
+        'lastVisionError',
+        `${error}${body.upstreamStatus ? ` (upstream ${body.upstreamStatus})` : ''} · HTTP ${res.status} · ${
+          blobs.length
+        } photo(s) · ${new Date().toISOString()}`,
+      )
+      return { ok: false, error, upstreamStatus: body.upstreamStatus }
     }
 
     const body = (await res.json()) as { model: string; result: VisionResult }
+    await setMeta('lastVisionError', null)
     return { ok: true, result: body.result, model: body.model }
   } catch {
     return { ok: false, error: 'vision-unreachable' }
@@ -152,4 +161,9 @@ export async function assetTypeForCode(code: string) {
   if (!code) return undefined
   const all = await db.assetTypes.toArray()
   return all.find((a) => a.code.toUpperCase() === code.toUpperCase() && a.active)
+}
+
+/** Why the last identification failed, for the diagnostics report. */
+export async function lastVisionError(): Promise<string | null> {
+  return getMeta<string | null>('lastVisionError', null)
 }

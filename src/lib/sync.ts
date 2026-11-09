@@ -479,11 +479,12 @@ export async function resyncEverything(): Promise<SyncResult> {
  * counts, timestamps and sync flags only.
  */
 export async function syncDiagnostics(): Promise<string> {
-  const [serverUrl, token, lastSyncAt, lastError] = await Promise.all([
+  const [serverUrl, token, lastSyncAt, lastError, visionError] = await Promise.all([
     getServerUrl(),
     getToken(),
     getMeta<number>('lastSyncAt', 0),
     lastSyncError(),
+    getMeta<string | null>('lastVisionError', null),
   ])
 
   const tables: Record<string, unknown> = {}
@@ -506,6 +507,7 @@ export async function syncDiagnostics(): Promise<string> {
       lastSyncAt,
       lastSyncAtReadable: lastSyncAt ? new Date(lastSyncAt).toISOString() : null,
       lastError,
+      lastVisionError: visionError,
       online: typeof navigator === 'undefined' ? null : navigator.onLine,
       tables,
       entries: entries.map((e) => ({
