@@ -1,4 +1,4 @@
-import { db, setMeta, uid } from './db'
+import { db, getMeta, setMeta, uid } from './db'
 import { sha256 } from '../lib/hash'
 import type { AssetType, Exercise, Floor, Inspector, Organization, Room } from '../types'
 
@@ -116,10 +116,18 @@ function today(): string {
 }
 
 /**
+ * Set once the user has chosen to start from nothing. Without it, wiping the
+ * device would simply bring the sample exercise back on the next load.
+ */
+export const SEED_DISABLED_KEY = 'seedDisabled'
+
+/**
  * Loads the Sufa Schools sample exercise. Idempotent: it does nothing once any
- * organization exists, so a half-finished exercise is never overwritten.
+ * organization exists, so a half-finished exercise is never overwritten, and
+ * nothing once the user has started fresh.
  */
 export async function seedIfEmpty(): Promise<void> {
+  if (await getMeta<boolean>(SEED_DISABLED_KEY, false)) return
   const existing = await db.organizations.count()
   if (existing > 0) return
 
@@ -211,4 +219,18 @@ export async function seedIfEmpty(): Promise<void> {
       await setMeta('seededAt', now)
     },
   )
+}
+
+/**
+ * Empties this device and stops the sample exercise returning, so a real
+ * organization can be registered from nothing.
+ *
+ * Local only. Anything already pushed to the sync server stays there — this is
+ * for a device that has never synced, or one being handed to a new exercise.
+ * The caller reloads the page afterwards.
+ */
+export async function startFresh(): Promise<void> {
+  await db.delete()
+  await db.open()
+  await setMeta(SEED_DISABLED_KEY, true)
 }

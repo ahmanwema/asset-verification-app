@@ -4,7 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from '../App'
 import { I18nProvider } from '../i18n'
 import { SessionProvider } from '../state/session'
-import { SEED_PASSWORD, seedIfEmpty } from '../db/seed'
+import { SEED_PASSWORD, seedIfEmpty, startFresh } from '../db/seed'
 import { db, setMeta } from '../db/db'
 import { resetDb } from './fixtures'
 
@@ -346,5 +346,21 @@ describe('bilingual UI', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /switch language/i }))
     expect(await screen.findByText('Pick a floor')).toBeTruthy()
+  })
+})
+
+describe('starting fresh', () => {
+  it('empties the device and keeps the sample exercise from coming back', async () => {
+    expect(await db.rooms.count()).toBe(51)
+
+    await startFresh()
+    expect(await db.rooms.count()).toBe(0)
+    expect(await db.organizations.count()).toBe(0)
+    expect(await db.inspectors.count()).toBe(0)
+
+    // The next app load must not re-seed, or "start fresh" would be a no-op.
+    await seedIfEmpty()
+    expect(await db.organizations.count()).toBe(0)
+    expect(await db.rooms.count()).toBe(0)
   })
 })

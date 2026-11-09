@@ -106,6 +106,12 @@ export const en = {
   'entry.specificPositionHint': 'e.g. Front left corner, mounted on east wall',
   'entry.detailsFilled': '{n} filled',
 
+  'setup.startFresh': 'Start fresh — delete the sample data',
+  'setup.startFreshHint':
+    'Empties this device and stops the Sufa Schools sample returning, so you can register your own organization, floors and rooms. Does not touch anything already synced to the server.',
+  'setup.startFreshConfirm':
+    'Delete everything on this device and start from nothing? The sample exercise will not come back. This cannot be undone.',
+
   'history.title': 'Edit history',
   'history.count': '{n} changes recorded',
   'history.edited': 'edited',
@@ -348,6 +354,12 @@ export const sw: Record<StringKey, string> = {
   'entry.specificPosition': 'Mahali ndani ya chumba',
   'entry.specificPositionHint': 'mfano: Kona ya mbele kushoto, ukutani upande wa mashariki',
   'entry.detailsFilled': '{n} yamejazwa',
+
+  'setup.startFresh': 'Anza upya — futa data ya majaribio',
+  'setup.startFreshHint':
+    'Hufuta kila kitu kwenye kifaa hiki na kuzuia sampuli ya Sufa Schools kurudi, ili usajili taasisi, ghorofa na vyumba vyako mwenyewe. Haigusi kilichokwisha kwenda kwenye server.',
+  'setup.startFreshConfirm':
+    'Futa kila kitu kwenye kifaa hiki na uanze bila kitu? Sampuli haitarudi. Hatua hii hairudishwi.',
 
   'history.title': 'Historia ya mabadiliko',
   'history.count': 'Mabadiliko {n} yamerekodiwa',

@@ -5,6 +5,7 @@ import { sha256 } from '../lib/hash'
 import { deriveCode, deriveRoomCode } from '../lib/tags'
 import { formatBytes, storageEstimate } from '../lib/photos'
 import { resetLocalData } from '../lib/sync'
+import { startFresh } from '../db/seed'
 import {
   VISION_MODELS,
   checkVisionAvailability,
@@ -803,15 +804,29 @@ function DataTab() {
 
       <VisionSettings />
 
-      <Button
-        variant="danger"
-        full
-        onClick={() => {
-          if (window.confirm(t('setup.resetConfirm'))) void resetLocalData()
-        }}
-      >
-        {t('setup.resetDemo')}
-      </Button>
+      <div className="space-y-2">
+        <Button
+          variant="danger"
+          full
+          onClick={() => {
+            if (!window.confirm(t('setup.startFreshConfirm'))) return
+            void startFresh().then(() => location.reload())
+          }}
+        >
+          {t('setup.startFresh')}
+        </Button>
+        <p className="text-xs text-slate-500">{t('setup.startFreshHint')}</p>
+
+        <Button
+          variant="secondary"
+          full
+          onClick={() => {
+            if (window.confirm(t('setup.resetConfirm'))) void resetLocalData()
+          }}
+        >
+          {t('setup.resetDemo')}
+        </Button>
+      </div>
     </div>
   )
 }
