@@ -498,31 +498,10 @@ export default function EntryPage() {
     }
     const next = nextUnrecordedType()
     if (next) {
+      // No field clearing here: the route keys EntryPage on the item, so this
+      // navigation remounts it with fresh state. A hand-written reset list is
+      // what let the previous item's values leak into the next one.
       navigate(`/room/${room.id}/item/${next}`)
-      // Reset the form for the next asset type on the same screen.
-      setLoaded(false)
-      setNotPresent(false)
-      setQuantity(1)
-      setSerials([''])
-      setPerItemSerials(false)
-      setModel('')
-      setBrand('')
-      setCondition('G')
-      setSplitCondition(false)
-      setBreakdown({})
-      setRemarks('')
-      setManualTags(false)
-      setPhotos([])
-      setRemovedPhotoIds([])
-      setMaterial('')
-      setColour('')
-      setItemType('')
-      setAdditionalFeatures('')
-      setDescription('')
-      setSpecificPosition('')
-      setAiAssisted(false)
-      setAiSnapshot(null)
-      setShowDetails(false)
     } else {
       navigate(`/room/${room.id}`)
     }

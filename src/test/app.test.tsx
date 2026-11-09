@@ -627,3 +627,44 @@ describe('a second device joining an exercise', () => {
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/sync'))).toBe(true)
   })
 })
+
+describe('moving between items in a room', () => {
+  it('does not carry one item form over to the next', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+
+    // Fill in the chair without saving: quantity, and a detail field of the
+    // kind photo recognition writes.
+    fireEvent.click(await screen.findByText('Student Chair'))
+    fireEvent.change(await screen.findByDisplayValue('1'), { target: { value: '7' } })
+    fireEvent.click(await screen.findByText('More details'))
+    fireEvent.change(await screen.findByLabelText('Material'), {
+      target: { value: 'Folding chair, metal frame' },
+    })
+
+    // Walk back and open a different asset type.
+    fireEvent.click(screen.getByRole('link', { name: /back/i }))
+    fireEvent.click(await screen.findByText('Student Table'))
+
+    // The table form must be its own: no quantity, no description from the chair.
+    expect(await screen.findByDisplayValue('1')).toBeTruthy()
+    expect(screen.queryByDisplayValue('7')).toBeNull()
+    expect(screen.queryByDisplayValue('Folding chair, metal frame')).toBeNull()
+    expect(screen.queryByLabelText('Material')).toBeNull() // details collapsed again
+  })
+
+  it('starts the next item clean after Save & next', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+
+    fireEvent.change(await screen.findByDisplayValue('1'), { target: { value: '9' } })
+    fireEvent.click(screen.getByRole('button', { name: /save & next/i }))
+
+    // Whatever type comes next, it starts at one rather than inheriting nine.
+    expect(await screen.findByDisplayValue('1', undefined, { timeout: 5000 })).toBeTruthy()
+    expect(screen.queryByDisplayValue('9')).toBeNull()
+  })
+})

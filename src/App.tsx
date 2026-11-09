@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useParams, useSearchParams } from 'react-router-dom'
 import AppShell from './components/AppShell'
 import LoginPage from './pages/LoginPage'
 import InspectPage from './pages/InspectPage'
@@ -12,6 +12,24 @@ import SetupPage from './pages/SetupPage'
 import SyncPage from './pages/SyncPage'
 import { useSession } from './state/session'
 import { useT } from './i18n'
+
+/**
+ * Forces a fresh EntryPage per item.
+ *
+ * React Router keeps one component instance across a change of params, so
+ * walking from one asset type to the next reused the form: the hydration
+ * effect saw it was already loaded and skipped, leaving the previous item's
+ * values — quantity, condition, and anything photo recognition had filled in
+ * — on screen under the new item's name, ready to be saved to it.
+ *
+ * Keying on the item remounts instead, which resets every field by
+ * construction rather than by remembering to clear each one.
+ */
+function KeyedEntryPage() {
+  const { roomId = '', assetTypeId = '' } = useParams()
+  const [search] = useSearchParams()
+  return <EntryPage key={`${roomId}|${assetTypeId}|${search.get('entry') ?? ''}`} />
+}
 
 export default function App() {
   const { ready, inspector } = useSession()
@@ -32,7 +50,7 @@ export default function App() {
         <Route path="/inspect" element={<InspectPage />} />
         <Route path="/inspect/:floorId" element={<FloorPage />} />
         <Route path="/room/:roomId" element={<RoomPage />} />
-        <Route path="/room/:roomId/item/:assetTypeId" element={<EntryPage />} />
+        <Route path="/room/:roomId/item/:assetTypeId" element={<KeyedEntryPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/labels" element={<LabelsPage />} />
