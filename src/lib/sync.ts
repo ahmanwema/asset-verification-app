@@ -246,11 +246,19 @@ export async function syncNow(): Promise<SyncResult> {
 
   // Apply server changes, never clobbering a record we still hold unsynced.
   let pulled = 0
+  let earliestSkipped = Number.POSITIVE_INFINITY
   for (const t of SYNC_TABLES) {
     const rows = payload.changes?.[t] ?? []
     for (const row of rows) {
       const local = await tableFor(t).get(row.id)
-      if (local && (local.syncStatus === 'pending' || local.syncStatus === 'conflict')) continue
+      if (local && (local.syncStatus === 'pending' || local.syncStatus === 'conflict')) {
+        // Hold the watermark behind anything refused. The server only sends
+        // what changed since `lastSyncAt`, so advancing past a record we
+        // declined means it is never offered again and the two devices stay
+        // different for ever — with nothing on screen to say so.
+        earliestSkipped = Math.min(earliestSkipped, Number(row.updatedAt) || 0)
+        continue
+      }
       if (local && Number(local.updatedAt) > Number(row.updatedAt)) continue
       await tableFor(t).put({ ...row, syncStatus: 'synced' })
       pulled += 1
@@ -258,7 +266,14 @@ export async function syncNow(): Promise<SyncResult> {
   }
 
   const photosUploaded = await uploadPendingPhotos(base, token)
-  await setMeta('lastSyncAt', payload.serverTime ?? Date.now())
+  const serverTime = payload.serverTime ?? Date.now()
+  // Skipped records resolve on a later round: a pending one is pushed and
+  // either accepted or turned into a conflict, and a conflict waits for the
+  // inspector. Re-asking for them until then costs one small response.
+  const watermark = Number.isFinite(earliestSkipped)
+    ? Math.min(serverTime, earliestSkipped - 1)
+    : serverTime
+  await setMeta('lastSyncAt', watermark)
 
   return remember({ ok: true, pushed, pulled, conflicts, photosUploaded })
 }
@@ -439,4 +454,18 @@ export async function ensureEntryPhotos(entryId: string): Promise<number> {
     }
   }
   return fetched
+}
+
+/**
+ * Asks the server for everything again, from the beginning of time.
+ *
+ * A device whose watermark has already moved past a record it declined will
+ * never be offered it again by an incremental pull. This is the way back,
+ * and it is also the honest answer to "the two screens disagree". Local work
+ * that has not been uploaded is still protected: a pending record is pushed
+ * first and a conflict still waits for the inspector.
+ */
+export async function resyncEverything(): Promise<SyncResult> {
+  await setMeta('lastSyncAt', 0)
+  return syncNow()
 }

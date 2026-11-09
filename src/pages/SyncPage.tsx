@@ -1,7 +1,15 @@
 import { useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, getMeta } from '../db/db'
-import { lastSyncError, loadSyncState, login as serverLogin, logoutSync, setServerUrl, syncNow } from '../lib/sync'
+import {
+  lastSyncError,
+  loadSyncState,
+  login as serverLogin,
+  logoutSync,
+  resyncEverything,
+  setServerUrl,
+  syncNow,
+} from '../lib/sync'
 import { resolveConflict } from '../lib/entries'
 import { formatBytes, storageEstimate } from '../lib/photos'
 import { useOnline, useSession } from '../state/session'
@@ -60,10 +68,10 @@ export default function SyncPage() {
     }
   }
 
-  async function run() {
+  async function run(everything = false) {
     setBusy(true)
     try {
-      const res = await syncNow()
+      const res = everything ? await resyncEverything() : await syncNow()
       if (res.ok) {
         flash(`${t('sync.ok')} · ${t('sync.pushed', { n: res.pushed })} · ${t('sync.pulled', { n: res.pulled })}`)
       } else {
@@ -121,6 +129,16 @@ export default function SyncPage() {
         <Button full onClick={() => void run()} disabled={busy || !online || !connected}>
           {busy ? t('sync.syncing') : t('sync.now')}
         </Button>
+
+        <Button
+          variant="secondary"
+          full
+          disabled={busy || !online || !connected}
+          onClick={() => void run(true)}
+        >
+          {t('sync.refetchAll')}
+        </Button>
+        <p className="text-xs text-slate-500">{t('sync.refetchAllHint')}</p>
 
         {lastError && (
           <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">

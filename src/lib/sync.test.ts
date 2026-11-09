@@ -10,7 +10,7 @@ import path from 'node:path'
 import { db, getMeta, setMeta } from '../db/db'
 import { resetDb, seedFixture, type Fixture } from '../test/fixtures'
 import { resolveConflict, saveEntry } from './entries'
-import { ensureEntryPhotos, lastSyncError, loadSyncState, login, pendingRoomCount, setServerUrl, syncNow } from './sync'
+import { ensureEntryPhotos, lastSyncError, loadSyncState, login, pendingRoomCount, resyncEverything, setServerUrl, syncNow } from './sync'
 
 const PORT = 4791
 const BASE = `http://127.0.0.1:${PORT}/api`
@@ -328,5 +328,65 @@ describe('sync failure is visible', () => {
     const ok = await syncNow()
     expect(ok.ok).toBe(true)
     expect(await lastSyncError()).toBeNull()
+  })
+})
+
+describe('the sync watermark', () => {
+  it('re-offers a record that was skipped, instead of losing it for ever', async () => {
+    await login('admin@test.local', 'secret123')
+
+    // Device A records an item and uploads it.
+    const entry = await saveEntry(draft({ quantity: 1 }))
+    await syncNow()
+
+    // Another device moves it on, straight against the server.
+    const token = (await loadSyncState()).token!
+    await fetch(`${BASE}/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        since: Date.now(),
+        changes: {
+          entries: [
+            { ...(await db.entries.get(entry.id)), quantity: 10, updatedAt: Date.now() + 5_000, syncStatus: undefined },
+          ],
+        },
+      }),
+    })
+
+    // Meanwhile this device has an unsynced edit of its own, so the pull
+    // must decline the server's copy rather than overwrite local work.
+    await db.entries.put({ ...(await db.entries.get(entry.id))!, remarks: 'mine', syncStatus: 'pending' })
+    await syncNow()
+
+    // The watermark must not have moved past the record it declined.
+    const since = await getMeta<number>('lastSyncAt', 0)
+    expect(since).toBeLessThan(Date.now() + 5_000)
+
+    // Once the local edit is reconciled, a plain sync still finds it.
+    const row = await db.entries.get(entry.id)
+    await db.entries.put({ ...row!, syncStatus: 'synced' })
+    await syncNow()
+    expect((await db.entries.get(entry.id))?.quantity).toBe(10)
+  })
+
+  it('re-downloads everything on demand', async () => {
+    await login('admin@test.local', 'secret123')
+    const entry = await saveEntry(draft({ quantity: 2 }))
+    await syncNow()
+
+    // Wipe it locally, as a device that lost its copy would have. (The test
+    // server is shared across this file, so other entries may exist too —
+    // this one record is what matters.)
+    await db.entries.delete(entry.id)
+    expect(await db.entries.get(entry.id)).toBeUndefined()
+
+    // An incremental sync has nothing to say: nothing changed since.
+    await syncNow()
+    expect(await db.entries.get(entry.id)).toBeUndefined()
+
+    // Asking for everything brings it back.
+    await resyncEverything()
+    expect((await db.entries.get(entry.id))?.quantity).toBe(2)
   })
 })
