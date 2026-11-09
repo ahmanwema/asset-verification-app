@@ -553,3 +553,77 @@ describe('registering an institution', () => {
     expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes('/register'))).toEqual([])
   })
 })
+
+describe('a second device joining an exercise', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('pulls the exercise on first load, with nothing of its own to push', async () => {
+    // A phone that has just signed in: empty, connected, nothing pending.
+    await startFresh()
+    await setMeta('syncToken', 'server-token')
+
+    const now = Date.now()
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => {
+      return new Response(
+        JSON.stringify({
+          serverTime: now,
+          accepted: {},
+          conflicts: [],
+          changes: {
+            organizations: [{ id: 'org_1', name: 'Loyola High School', address: '', updatedAt: now }],
+            exercises: [
+              {
+                id: 'ex_1',
+                orgId: 'org_1',
+                name: 'Asset Verification 2026',
+                date: '2026-11-09',
+                status: 'active',
+                approvedBy: '',
+                teamLeaderId: 'usr_1',
+                updatedAt: now,
+              },
+            ],
+            inspectors: [
+              {
+                id: 'usr_1',
+                name: 'Aman',
+                email: 'aman@loyola.ac.tz',
+                role: 'admin',
+                active: true,
+                passwordHash: await sha256('a-good-password'),
+                updatedAt: now,
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await db.inspectors.put({
+      id: 'usr_1',
+      name: 'Aman',
+      email: 'aman@loyola.ac.tz',
+      role: 'admin',
+      active: true,
+      passwordHash: await sha256('a-good-password'),
+      updatedAt: now,
+      syncStatus: 'synced',
+    })
+
+    renderApp()
+    fireEvent.change(await screen.findByLabelText(/email/i), { target: { value: 'aman@loyola.ac.tz' } })
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'a-good-password' } })
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }))
+
+    // The shell pulls without being asked, and the exercise appears.
+    await waitFor(
+      async () => expect(await db.exercises.count()).toBe(1),
+      { timeout: 8000 },
+    )
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/sync'))).toBe(true)
+  })
+})

@@ -84,6 +84,36 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   const conflicts = useLiveQuery(() => db.entries.where('syncStatus').equals('conflict').count(), [])
 
+  /**
+   * First sync of the session, whether or not anything is waiting to go up.
+   *
+   * The opportunistic sync below only fires when something is pending, which
+   * is never true on a device that has just signed in: it has an empty
+   * database and everything to receive. Without this, a second phone shows
+   * "Nothing here yet" until someone finds Sync by hand.
+   */
+  const pulledOnce = useRef(false)
+  useEffect(() => {
+    if (!online || pulledOnce.current || syncing.current) return
+    pulledOnce.current = true
+    let cancelled = false
+    void (async () => {
+      if (!(await getToken())) {
+        pulledOnce.current = false // not connected yet; try again once it is
+        return
+      }
+      syncing.current = true
+      try {
+        await syncNow()
+      } finally {
+        if (!cancelled) syncing.current = false
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [online])
+
   // Opportunistic sync: when the signal comes back and something is waiting.
   useEffect(() => {
     if (!online || !pending || syncing.current) return
