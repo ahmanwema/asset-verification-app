@@ -296,6 +296,13 @@ export const en = {
   'labels.moreResults': '{n} more labels — search or filter to narrow',
   'labels.allowPopups': 'Allow pop-ups to print labels',
 
+  'asset.loading': 'Loading asset record and photos…',
+  'asset.notFound': 'This asset record is not available',
+  'asset.notFoundHint': 'Sign in to the correct institution, then sync and scan the label again.',
+  'asset.unknown': 'Asset',
+  'asset.verifiedOn': 'Verified on',
+  'asset.photos': 'Item photos',
+
   'setup.title': 'Setup',
   'setup.org': 'Organization',
   'setup.orgName': 'Organization name',
@@ -631,6 +638,13 @@ export const sw: Record<StringKey, string> = {
   'labels.clearFilters': 'Ondoa vichujio',
   'labels.moreResults': 'Lebo {n} zaidi — tafuta au chuja ili kupunguza',
   'labels.allowPopups': 'Ruhusu pop-up ili kuchapisha lebo',
+
+  'asset.loading': 'Inapakia taarifa na picha za kifaa…',
+  'asset.notFound': 'Taarifa za kifaa hiki hazipatikani',
+  'asset.notFoundHint': 'Ingia kwenye taasisi sahihi, sawazisha, kisha scan lebo tena.',
+  'asset.unknown': 'Kifaa',
+  'asset.verifiedOn': 'Kimehakikiwa tarehe',
+  'asset.photos': 'Picha za kifaa',
 
   'setup.title': 'Mipangilio',
   'setup.org': 'Taasisi',

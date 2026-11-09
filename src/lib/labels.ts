@@ -101,6 +101,13 @@ export async function qrDataUrl(text: string, size = 160): Promise<string> {
   })
 }
 
+/** Authenticated app page opened when a printed label is scanned. */
+export function labelTargetUrl(label: Pick<LabelData, 'entryId' | 'tag'>, origin: string): string {
+  const url = new URL(`/asset/${encodeURIComponent(label.entryId)}`, origin)
+  url.searchParams.set('tag', label.tag)
+  return url.toString()
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) =>
     c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '"' ? '&quot;' : '&#39;',
@@ -111,8 +118,10 @@ function escapeHtml(s: string): string {
  * Builds a self-contained print document: 50x30mm labels, 4 per row on A4,
  * with the QR codes inlined as data URLs so printing works with no network.
  */
-export async function renderLabelsHtml(sheet: LabelSheet): Promise<string> {
-  const qrs = await Promise.all(sheet.labels.map((l) => qrDataUrl(l.tag, 180)))
+export async function renderLabelsHtml(sheet: LabelSheet, origin = 'http://localhost'): Promise<string> {
+  const qrs = await Promise.all(
+    sheet.labels.map((label) => qrDataUrl(labelTargetUrl(label, origin), 180)),
+  )
   const cells = sheet.labels
     .map(
       (l, i) => `
@@ -167,7 +176,7 @@ export async function renderLabelsHtml(sheet: LabelSheet): Promise<string> {
 
 /** Opens the print sheet in a new tab. Must be called from a user gesture. */
 export async function printLabels(sheet: LabelSheet): Promise<boolean> {
-  const html = await renderLabelsHtml(sheet)
+  const html = await renderLabelsHtml(sheet, window.location.origin)
   const win = window.open('', '_blank')
   if (!win) return false
   win.document.open()

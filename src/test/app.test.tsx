@@ -819,3 +819,24 @@ describe('finding labels before printing', () => {
     expect(await screen.findByText(/nothing matches/i)).toBeTruthy()
   }, 10_000)
 })
+
+describe('opening an asset from a printed QR label', () => {
+  it('shows the tagged item, its location and its photo area', async () => {
+    await signIn()
+
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+    fireEvent.click(await screen.findByRole('button', { name: /^save$/i }))
+    await screen.findByText('1/16 items checked', undefined, { timeout: 5000 })
+
+    const entry = (await db.entries.toArray())[0]
+    window.history.pushState({}, '', `/asset/${entry.id}?tag=${entry.tagNumbers[0]}`)
+    fireEvent.popState(window)
+
+    expect(await screen.findByText(entry.tagNumbers[0], undefined, { timeout: 5000 })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Student Chair' })).toBeTruthy()
+    expect(screen.getByText('Item photos')).toBeTruthy()
+    expect(screen.getByText('No photo was taken for this item')).toBeTruthy()
+  }, 10_000)
+})

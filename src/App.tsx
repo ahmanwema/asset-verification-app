@@ -11,6 +11,7 @@ import ReportViewPage from './pages/ReportViewPage'
 import LabelsPage from './pages/LabelsPage'
 import SetupPage from './pages/SetupPage'
 import SyncPage from './pages/SyncPage'
+import AssetPage from './pages/AssetPage'
 import { useSession } from './state/session'
 import { useT } from './i18n'
 
@@ -56,6 +57,7 @@ export default function App() {
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/reports/:kind" element={<ReportViewPage />} />
         <Route path="/labels" element={<LabelsPage />} />
+        <Route path="/asset/:entryId" element={<AssetPage />} />
         <Route path="/setup" element={<SetupPage />} />
         <Route path="/sync" element={<SyncPage />} />
         <Route path="*" element={<Navigate to="/inspect" replace />} />
