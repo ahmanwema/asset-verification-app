@@ -1,4 +1,5 @@
 import { db, getMeta, setMeta } from '../db/db'
+import { SEED_DISABLED_KEY } from '../db/seed'
 import { bytesToBase64 } from './photos'
 import type { InspectionEntry, Role } from '../types'
 
@@ -90,6 +91,70 @@ export interface ServerAccount {
   name: string
   email: string
   role: Role
+  organization?: { id: string; name: string; address?: string }
+}
+
+export const ACTIVE_ORG_KEY = 'activeOrgId'
+
+/**
+ * Switching tenants while this device has unuploaded work would either lose
+ * that work or send it to the wrong institution. Stop and let the user sign
+ * back into the old tenant first instead of making either mistake.
+ */
+export class TenantSwitchPendingError extends Error {
+  constructor() {
+    super('tenant-switch-pending')
+    this.name = 'TenantSwitchPendingError'
+  }
+}
+
+async function inferLocalOrgId(): Promise<string | null> {
+  const remembered = await getMeta<string | null>(ACTIVE_ORG_KEY, null)
+  if (remembered) return remembered
+
+  const activeExerciseId = await getMeta<string | null>('activeExerciseId', null)
+  const activeExercise = activeExerciseId ? await db.exercises.get(activeExerciseId) : undefined
+  if (activeExercise?.orgId) return activeExercise.orgId
+
+  const organizations = await db.organizations.toArray()
+  return organizations.length === 1 ? organizations[0].id : null
+}
+
+async function pendingLocalWork(): Promise<number> {
+  let count = await db.photos.where('syncStatus').equals('pending').count()
+  for (const table of SYNC_TABLES) {
+    count += await tableFor(table).where('syncStatus').equals('pending').count()
+  }
+  return count
+}
+
+/** Clears one tenant's cached operational data while retaining device settings. */
+async function clearCachedTenant(): Promise<void> {
+  const tables = [
+    db.organizations,
+    db.inspectors,
+    db.exercises,
+    db.floors,
+    db.rooms,
+    db.assetTypes,
+    db.entries,
+    db.signoffs,
+    db.photos,
+  ]
+  await db.transaction('rw', tables, async () => {
+    for (const table of tables) await table.clear()
+  })
+  await Promise.all([
+    setMeta('activeExerciseId', null),
+    setMeta('lastSyncAt', 0),
+    setMeta('lastSyncError', null),
+    setMeta(SEED_DISABLED_KEY, true),
+  ])
+  try {
+    localStorage.removeItem('av.session.inspectorId')
+  } catch {
+    /* Storage can be unavailable in private browsing; IndexedDB is enough. */
+  }
 }
 
 /**
@@ -108,18 +173,37 @@ export async function login(email: string, password: string): Promise<ServerAcco
       body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
     })
     if (!res.ok) return null
-    const data = (await res.json()) as { token?: string; inspector?: ServerAccount }
+    const data = (await res.json()) as {
+      token?: string
+      inspector?: ServerAccount
+      organization?: { id: string; name: string; address?: string }
+    }
     if (!data.token) return null
+
+    // The server is authoritative about the tenant. A browser database is
+    // shared by every account on that phone, so explicitly replace the old
+    // tenant's cache before storing the new tenant's token.
+    if (data.organization?.id) {
+      const oldOrgId = await inferLocalOrgId()
+      if (oldOrgId && oldOrgId !== data.organization.id) {
+        if ((await pendingLocalWork()) > 0) throw new TenantSwitchPendingError()
+        await clearCachedTenant()
+      }
+      await setMeta(ACTIVE_ORG_KEY, data.organization.id)
+      await setMeta('lastSyncAt', 0)
+    }
     await setMeta('syncToken', data.token)
-    return (
+    if (data.organization?.id) await syncNow()
+    const account =
       data.inspector ?? {
         id: `usr_${email.trim().toLowerCase()}`,
         name: email.trim(),
         email: email.trim().toLowerCase(),
         role: 'inspector',
       }
-    )
-  } catch {
+    return { ...account, organization: data.organization }
+  } catch (error) {
+    if (error instanceof TenantSwitchPendingError) throw error
     return null
   }
 }
@@ -135,6 +219,18 @@ function stripForPush(table: SyncTable, rec: AnyRecord): AnyRecord {
     return entry as AnyRecord
   }
   return rest as AnyRecord
+}
+
+/** Defense in depth for servers that pre-date tenant-aware sync filtering. */
+async function belongsToActiveOrganization(table: SyncTable, row: AnyRecord, orgId: string): Promise<boolean> {
+  if (table === 'organizations') return row.id === orgId
+  if (table === 'exercises' || table === 'assetTypes') return row.orgId === orgId
+  if (table === 'inspectors') return row.orgId === undefined || row.orgId === orgId
+
+  const exerciseId = typeof row.exerciseId === 'string' ? row.exerciseId : ''
+  if (!exerciseId) return false
+  const exercise = await db.exercises.get(exerciseId)
+  return exercise?.orgId === orgId
 }
 
 /**
@@ -163,14 +259,19 @@ export async function syncNow(): Promise<SyncResult> {
   }
 
   const since = await getMeta<number>('lastSyncAt', 0)
+  const activeOrgId = await getMeta<string | null>(ACTIVE_ORG_KEY, null)
   const changes: Partial<Record<SyncTable, AnyRecord[]>> = {}
   let pushed = 0
 
   for (const t of SYNC_TABLES) {
     const pending = await tableFor(t).where('syncStatus').equals('pending').toArray()
-    if (pending.length > 0) {
-      changes[t] = pending.map((r) => stripForPush(t, r))
-      pushed += pending.length
+    const owned: AnyRecord[] = []
+    for (const row of pending) {
+      if (!activeOrgId || (await belongsToActiveOrganization(t, row, activeOrgId))) owned.push(row)
+    }
+    if (owned.length > 0) {
+      changes[t] = owned.map((r) => stripForPush(t, r))
+      pushed += owned.length
     }
   }
 
@@ -226,6 +327,7 @@ export async function syncNow(): Promise<SyncResult> {
   // Store conflicts on the local entry so the UI can offer mine/theirs.
   let conflicts = 0
   for (const c of payload.conflicts ?? []) {
+    if (activeOrgId && !(await belongsToActiveOrganization(c.table, c.server, activeOrgId))) continue
     if (c.table !== 'entries') {
       // Non-entry tables are setup data: the server copy wins.
       await tableFor(c.table).put({ ...c.server, syncStatus: 'synced' })
@@ -250,6 +352,7 @@ export async function syncNow(): Promise<SyncResult> {
   for (const t of SYNC_TABLES) {
     const rows = payload.changes?.[t] ?? []
     for (const row of rows) {
+      if (activeOrgId && !(await belongsToActiveOrganization(t, row, activeOrgId))) continue
       const local = await tableFor(t).get(row.id)
       if (local && (local.syncStatus === 'pending' || local.syncStatus === 'conflict')) {
         // Hold the watermark behind anything refused. The server only sends
@@ -260,7 +363,11 @@ export async function syncNow(): Promise<SyncResult> {
         continue
       }
       if (local && Number(local.updatedAt) > Number(row.updatedAt)) continue
-      await tableFor(t).put({ ...row, syncStatus: 'synced' })
+      await tableFor(t).put({
+        ...row,
+        ...(t === 'inspectors' && activeOrgId ? { orgId: activeOrgId } : {}),
+        syncStatus: 'synced',
+      })
       pulled += 1
     }
   }

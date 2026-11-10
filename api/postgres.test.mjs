@@ -328,6 +328,69 @@ describe('tenant isolation', () => {
     expect((await handleLogin(store, { email: 'a@a.tz', password: 'hunter2' })).status).toBe(401)
     expect((await handleLogin(store, { email: 'a@a.tz', password: 'a-good-password' })).status).toBe(200)
   })
+
+  it('rejects cached records whose organization fields belong to another tenant', async () => {
+    const a = await register('School A', 'a@a.tz')
+    const b = await register('School B', 'b@b.tz')
+
+    const pushed = await handleSync(store, a.actor, {
+      since: 0,
+      changes: {
+        organizations: [{ id: b.organization.id, name: 'School B', updatedAt: 10 }],
+        exercises: [{ id: 'ex_foreign', orgId: b.organization.id, name: 'B exercise', updatedAt: 11 }],
+        assetTypes: [{ id: 'at_foreign', orgId: b.organization.id, name: 'B chair', updatedAt: 12 }],
+        entries: [entry({ id: 'en_foreign', exerciseId: 'ex_foreign', updatedAt: 13 })],
+      },
+    })
+
+    expect(pushed.body.accepted.organizations).toEqual([])
+    expect(pushed.body.accepted.exercises).toEqual([])
+    expect(pushed.body.accepted.assetTypes).toEqual([])
+    expect(pushed.body.accepted.entries).toEqual([])
+    expect(await store.recordFor(a.actor.orgId, 'exercises', 'ex_foreign')).toBeNull()
+    expect(await store.recordFor(a.actor.orgId, 'entries', 'en_foreign')).toBeNull()
+  })
+
+  it('hides foreign records left inside a tenant partition by an older client', async () => {
+    const a = await register('School A', 'a@a.tz')
+    const b = await register('School B', 'b@b.tz')
+    const now = Date.now()
+
+    await store.writeRecord(a.actor.orgId, 'organizations', {
+      id: b.organization.id,
+      updatedAt: now,
+      inspectorId: b.actor.id,
+      deleted: false,
+      json: { id: b.organization.id, name: 'School B', updatedAt: now },
+    })
+    await store.writeRecord(a.actor.orgId, 'exercises', {
+      id: 'ex_old_foreign',
+      updatedAt: now + 1,
+      inspectorId: b.actor.id,
+      deleted: false,
+      json: { id: 'ex_old_foreign', orgId: b.organization.id, name: 'B exercise', updatedAt: now + 1 },
+    })
+    await store.writeRecord(a.actor.orgId, 'entries', {
+      id: 'en_old_foreign',
+      updatedAt: now + 2,
+      inspectorId: b.actor.id,
+      deleted: false,
+      json: entry({ id: 'en_old_foreign', exerciseId: 'ex_old_foreign', updatedAt: now + 2 }),
+    })
+    await store.writeRecord(a.actor.orgId, 'inspectors', {
+      id: b.actor.id,
+      updatedAt: now + 3,
+      inspectorId: b.actor.id,
+      deleted: false,
+      json: { id: b.actor.id, email: 'b@b.tz', name: 'School B Admin', updatedAt: now + 3 },
+    })
+
+    const pull = await handleSync(store, a.actor, { since: 0, changes: {} })
+    expect((pull.body.changes.organizations || []).map((row) => row.id)).not.toContain(b.organization.id)
+    expect((pull.body.changes.exercises || []).map((row) => row.id)).not.toContain('ex_old_foreign')
+    expect((pull.body.changes.entries || []).map((row) => row.id)).not.toContain('en_old_foreign')
+    expect((pull.body.changes.inspectors || []).map((row) => row.email)).not.toContain('b@b.tz')
+  })
 })
 
 describe('team accounts', () => {
@@ -639,7 +702,10 @@ describe('health', () => {
     const user = await authenticate(store, (await signIn()).token)
     await handleSync(store, user, {
       since: 0,
-      changes: { entries: [entry(), entry({ id: 'en_2' })], rooms: [{ id: 'rm_1', updatedAt: 1 }] },
+      changes: {
+        entries: [entry(), entry({ id: 'en_2' })],
+        rooms: [{ id: 'rm_1', exerciseId: 'ex_1', updatedAt: 1 }],
+      },
     })
 
     const { status, body } = await handleHealth(store, user.orgId)

@@ -18,6 +18,8 @@ export const en = {
   'login.password': 'Password',
   'login.submit': 'Sign in',
   'login.error': 'Wrong email or password',
+  'login.tenantPending':
+    'This device has unsynced work from another organization. Sign in to that organization and sync it first.',
   'login.hint': 'Seeded accounts use the password',
   'login.offlineNote': 'Sign-in works offline once the exercise is on this device.',
   'login.logout': 'Sign out',
@@ -427,6 +429,8 @@ export const sw: Record<StringKey, string> = {
   'login.password': 'Neno la siri',
   'login.submit': 'Ingia',
   'login.error': 'Barua pepe au neno la siri si sahihi',
+  'login.tenantPending':
+    'Kifaa hiki kina kazi za kampuni nyingine ambazo bado hazijasawazishwa. Ingia kwenye kampuni hiyo na usawazishe kwanza.',
   'login.hint': 'Akaunti za mfano hutumia neno la siri',
   'login.offlineNote': 'Unaweza kuingia bila mtandao mara zoezi lipo kwenye kifaa hiki.',
   'login.logout': 'Toka',

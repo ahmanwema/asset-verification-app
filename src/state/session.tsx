@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { db, getMeta, setMeta, uid } from '../db/db'
 import { sha256 } from '../lib/hash'
-import { login as serverLogin } from '../lib/sync'
+import { ACTIVE_ORG_KEY, login as serverLogin } from '../lib/sync'
 import type { Exercise, Inspector } from '../types'
 
 const SESSION_KEY = 'av.session.inspectorId'
@@ -32,13 +32,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       /* ignore */
     }
     const who = storedId ? ((await db.inspectors.get(storedId)) ?? null) : null
-    setInspector(who && who.active ? who : null)
+    const activeOrgId = await getMeta<string | null>(ACTIVE_ORG_KEY, null)
+    setInspector(who && who.active && (!activeOrgId || !who.orgId || who.orgId === activeOrgId) ? who : null)
 
     const activeId = await getMeta<string | null>('activeExerciseId', null)
     let ex = activeId ? ((await db.exercises.get(activeId)) ?? null) : null
+    if (ex && activeOrgId && ex.orgId !== activeOrgId) ex = null
     if (!ex) {
       const all = await db.exercises.toArray()
-      ex = all.sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null
+      ex = all
+        .filter((item) => !activeOrgId || item.orgId === activeOrgId)
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null
       if (ex) await setMeta('activeExerciseId', ex.id)
     }
     setExercise(ex)
@@ -59,14 +63,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   /**
-   * Sign-in is offline-first: the device is asked before the network, so an
-   * inspector in a basement classroom with no signal still gets in.
+   * When online, the server is asked first because it is the authority on the
+   * account's organization. This prevents a cached Loyola session from being
+   * reused for a Sufa login (and vice versa). The local hash remains the
+   * fallback when the network is unavailable.
    *
-   * It falls back to the sync server when the device cannot answer — a phone
-   * that has never synced holds no accounts at all, so without this a new
-   * device could never be used, and wiping a device would lock its owner out
-   * permanently. On success the account is written locally with the same hash
-   * the offline path checks, so every later sign-in works with no signal.
+   * A phone that has never synced holds no accounts at all, so a successful
+   * server sign-in is written locally with the same hash the offline path
+   * checks. Later sign-ins can therefore still work with no signal.
    */
   const login = useCallback(
     async (email: string, password: string) => {
@@ -75,35 +79,44 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       const all = await db.inspectors.toArray()
       const found = all.find((i) => i.email.toLowerCase() === normalized && i.active)
-      if (found?.passwordHash && found.passwordHash === hash) {
+      const online = typeof navigator === 'undefined' || navigator.onLine
+
+      if (online) {
+        const account = await serverLogin(normalized, password)
+        if (account) {
+          const activeOrgId = account.organization?.id ?? (await getMeta<string | null>(ACTIVE_ORG_KEY, null))
+          const who: Inspector = {
+            id: account.id ?? uid('insp_'),
+            orgId: activeOrgId ?? undefined,
+            name: account.name || normalized,
+            email: account.email || normalized,
+            role: account.role === 'admin' ? 'admin' : 'inspector',
+            active: true,
+            passwordHash: hash,
+            updatedAt: Date.now(),
+            // It came from the server, so it is not something to push back up.
+            syncStatus: 'synced',
+          }
+          await db.inspectors.put(who)
+          startSession(who)
+          await refresh()
+          return true
+        }
+      }
+
+      const activeOrgId = await getMeta<string | null>(ACTIVE_ORG_KEY, null)
+      if (
+        found?.passwordHash &&
+        found.passwordHash === hash &&
+        (!activeOrgId || !found.orgId || found.orgId === activeOrgId)
+      ) {
         startSession(found)
+        await refresh()
         return true
       }
-
-      // A wrong password for a known account should not silently ask the
-      // server, unless the server is the only thing that can answer.
-      if (typeof navigator !== 'undefined' && !navigator.onLine) return false
-
-      const account = await serverLogin(normalized, password)
-      if (!account) return false
-
-      const existing = all.find((i) => i.email.toLowerCase() === account.email.toLowerCase())
-      const who: Inspector = {
-        id: existing?.id ?? account.id ?? uid('insp_'),
-        name: account.name || normalized,
-        email: account.email || normalized,
-        role: account.role === 'admin' ? 'admin' : 'inspector',
-        active: true,
-        passwordHash: hash,
-        updatedAt: Date.now(),
-        // It came from the server, so it is not something to push back up.
-        syncStatus: 'synced',
-      }
-      await db.inspectors.put(who)
-      startSession(who)
-      return true
+      return false
     },
-    [startSession],
+    [refresh, startSession],
   )
 
   const logout = useCallback(() => {

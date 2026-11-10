@@ -144,6 +144,7 @@ export async function seedIfEmpty(): Promise<void> {
 
   const inspectors: Inspector[] = SEED_TEAM.map(([name, email, role], i) => ({
     id: uid('insp_'),
+    orgId: org.id,
     name,
     email,
     role,

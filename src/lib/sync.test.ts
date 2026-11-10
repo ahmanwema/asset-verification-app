@@ -2,7 +2,7 @@
  * Client-side sync against a real server process: push, pull, conflict capture
  * and photo upload, exercised through the same code the phone runs.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -10,7 +10,18 @@ import path from 'node:path'
 import { db, getMeta, setMeta } from '../db/db'
 import { resetDb, seedFixture, type Fixture } from '../test/fixtures'
 import { resolveConflict, saveEntry } from './entries'
-import { ensureEntryPhotos, lastSyncError, loadSyncState, login, pendingRoomCount, resyncEverything, setServerUrl, syncNow } from './sync'
+import {
+  ACTIVE_ORG_KEY,
+  ensureEntryPhotos,
+  lastSyncError,
+  loadSyncState,
+  login,
+  pendingRoomCount,
+  resyncEverything,
+  setServerUrl,
+  syncNow,
+  TenantSwitchPendingError,
+} from './sync'
 
 const PORT = 4791
 const BASE = `http://127.0.0.1:${PORT}/api`
@@ -105,6 +116,85 @@ describe('connection', () => {
 
     const state = await loadSyncState()
     expect(state.token).toMatch(/^[0-9a-f]{64}$/)
+  })
+})
+
+describe('switching organizations on one device', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('replaces the old cache and ignores foreign rows returned by an old server', async () => {
+    await db.organizations.toCollection().modify({ syncStatus: 'synced' })
+    await db.inspectors.toCollection().modify({ syncStatus: 'synced' })
+    await db.exercises.toCollection().modify({ syncStatus: 'synced' })
+    await db.floors.toCollection().modify({ syncStatus: 'synced' })
+    await db.rooms.toCollection().modify({ syncStatus: 'synced' })
+    await db.assetTypes.toCollection().modify({ syncStatus: 'synced' })
+
+    const now = Date.now()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.endsWith('/login')) {
+          return new Response(
+            JSON.stringify({
+              token: 'sufa-token',
+              inspector: { id: 'usr_sufa', name: 'Sufa Admin', email: 'admin@sufa.test', role: 'admin' },
+              organization: { id: 'org_sufa', name: 'Sufa Schools Company Limited' },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        return new Response(
+          JSON.stringify({
+            serverTime: now,
+            accepted: {},
+            conflicts: [],
+            changes: {
+              organizations: [
+                { id: 'org_sufa', name: 'Sufa Schools Company Limited', updatedAt: now },
+                { id: fx.org.id, name: 'Loyola High School', updatedAt: now },
+              ],
+              exercises: [
+                { id: 'ex_sufa', orgId: 'org_sufa', name: 'Sufa verification', updatedAt: now },
+                { id: 'ex_loyola', orgId: fx.org.id, name: 'Loyola verification', updatedAt: now },
+              ],
+              inspectors: [
+                { id: 'usr_sufa', email: 'admin@sufa.test', name: 'Sufa Admin', role: 'admin', active: true, updatedAt: now },
+              ],
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    const account = await login('admin@sufa.test', 'correct-password')
+    expect(account?.organization?.id).toBe('org_sufa')
+    expect(await getMeta(ACTIVE_ORG_KEY, null)).toBe('org_sufa')
+    expect((await db.organizations.toArray()).map((row) => row.name)).toEqual(['Sufa Schools Company Limited'])
+    expect((await db.exercises.toArray()).map((row) => row.id)).toEqual(['ex_sufa'])
+    expect((await db.inspectors.get('usr_sufa'))?.orgId).toBe('org_sufa')
+  })
+
+  it('does not discard unsynced work when an account belongs to another organization', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            token: 'sufa-token',
+            inspector: { id: 'usr_sufa', name: 'Sufa Admin', email: 'admin@sufa.test', role: 'admin' },
+            organization: { id: 'org_sufa', name: 'Sufa Schools Company Limited' },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    )
+
+    await expect(login('admin@sufa.test', 'correct-password')).rejects.toBeInstanceOf(TenantSwitchPendingError)
+    expect(await db.organizations.get(fx.org.id)).toBeTruthy()
+    expect(await getMeta(ACTIVE_ORG_KEY, null)).toBeNull()
   })
 })
 

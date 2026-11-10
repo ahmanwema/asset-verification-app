@@ -66,6 +66,8 @@ export interface AssetType {
 
 export interface Inspector {
   id: string
+  /** Tenant that owns this cached account. Used to keep offline sign-in isolated. */
+  orgId?: string
   name: string
   role: Role
   email: string

@@ -90,7 +90,9 @@ export default function SetupPage() {
         ))}
       </div>
 
-      {tab === 'org' && <OrgTab canEdit={isAdmin} onSaved={() => void refresh()} flash={flash} />}
+      {tab === 'org' && (
+        <OrgTab canEdit={isAdmin} exerciseId={exercise?.id} onSaved={() => void refresh()} flash={flash} />
+      )}
       {tab === 'floors' && <FloorsTab canEdit={isAdmin} exerciseId={exercise?.id} flash={flash} />}
       {tab === 'assets' && <AssetsTab canEdit={isAdmin} orgId={exercise?.orgId} flash={flash} />}
       {tab === 'team' && <TeamTab canEdit={isAdmin} flash={flash} />}
@@ -105,22 +107,26 @@ export default function SetupPage() {
 
 function OrgTab({
   canEdit,
+  exerciseId,
   onSaved,
   flash,
 }: {
   canEdit: boolean
+  exerciseId?: string
   onSaved: () => void
   flash: (m: string) => void
 }) {
   const t = useT()
   const data = useLiveQuery(async () => {
-    const [orgs, exercises, inspectors] = await Promise.all([
-      db.organizations.toArray(),
-      db.exercises.toArray(),
+    if (!exerciseId) return undefined
+    const exercise = await db.exercises.get(exerciseId)
+    if (!exercise) return undefined
+    const [org, inspectors] = await Promise.all([
+      db.organizations.get(exercise.orgId),
       db.inspectors.toArray(),
     ])
-    return { org: orgs[0], exercise: exercises.sort((a, b) => b.updatedAt - a.updatedAt)[0], inspectors }
-  }, [])
+    return { org, exercise, inspectors }
+  }, [exerciseId])
 
   if (!data?.org || !data.exercise) return <p className="text-sm text-slate-500">{t('common.loading')}</p>
   const { org, exercise, inspectors } = data

@@ -40,7 +40,7 @@ export async function collectLabels(opts: {
   const floorById = new Map(floors.map((f) => [f.id, f]))
   const roomById = new Map(rooms.map((r) => [r.id, r]))
   const typeById = new Map(assetTypes.map((a) => [a.id, a]))
-  const org = orgs.find((o) => o.id === exercise?.orgId) ?? orgs[0]
+  const org = orgs.find((o) => o.id === exercise?.orgId)
 
   const inScope = entriesRaw.filter((e) => {
     if (e.deleted || e.tagNumbers.length === 0) return false

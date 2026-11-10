@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useI18n, useT } from '../i18n'
-import { useOnline, useSession } from '../state/session'
+import { useSession } from '../state/session'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
 import { sha256 } from '../lib/hash'
 import { SEED_PASSWORD } from '../db/seed'
-import { getToken, login as serverLogin } from '../lib/sync'
+import { TenantSwitchPendingError } from '../lib/sync'
 import { Button, Field, TextInput } from '../components/ui'
 import RegisterPage from './RegisterPage'
 
@@ -13,10 +13,9 @@ export default function LoginPage() {
   const t = useT()
   const { lang, setLang } = useI18n()
   const { login } = useSession()
-  const online = useOnline()
   const [email, setEmail] = useState('admin@sufa.ac.tz')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState(false)
+  const [error, setError] = useState<'credentials' | 'tenantPending' | null>(null)
   const [busy, setBusy] = useState(false)
   const [registering, setRegistering] = useState(false)
 
@@ -33,17 +32,21 @@ export default function LoginPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setBusy(true)
-    setError(false)
-    const ok = await login(email, password)
-    if (!ok) {
-      setError(true)
+    setError(null)
+    let ok = false
+    try {
+      ok = await login(email, password)
+    } catch (err) {
+      if (err instanceof TenantSwitchPendingError) setError('tenantPending')
+      else setError('credentials')
       setBusy(false)
       return
     }
-    // Grab a sync token while we still hold the plaintext password and have
-    // signal. Skipped when the session already got one by authenticating
-    // against the server, which is what happens on a device with no accounts.
-    if (online && !(await getToken())) void serverLogin(email, password)
+    if (!ok) {
+      setError('credentials')
+      setBusy(false)
+      return
+    }
     setBusy(false)
   }
 
@@ -73,7 +76,10 @@ export default function LoginPage() {
               required
             />
           </Field>
-          <Field label={t('login.password')} error={error ? t('login.error') : undefined}>
+          <Field
+            label={t('login.password')}
+            error={error === 'tenantPending' ? t('login.tenantPending') : error ? t('login.error') : undefined}
+          >
             <TextInput
               type="password"
               autoComplete="current-password"

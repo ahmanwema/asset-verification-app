@@ -179,6 +179,29 @@ export async function authenticate(store, token) {
 }
 
 /**
+ * A record is stored under the authenticated tenant at the SQL layer, but its
+ * own relationship fields must agree too. Older clients could accidentally
+ * push a cached Loyola exercise while authenticated as Sufa; without this
+ * check that foreign JSON would still live inside Sufa's partition.
+ */
+async function recordBelongsToOrganization(store, orgId, tableName, row, invalidExerciseIds = new Set()) {
+  if (!row || typeof row !== 'object') return false
+  if (tableName === 'organizations') return String(row.id || '') === orgId
+  if (tableName === 'exercises' || tableName === 'assetTypes') return String(row.orgId || '') === orgId
+  if (tableName === 'inspectors') {
+    const member = await store.userByEmail(String(row.email || '').toLowerCase())
+    return Boolean(member && member.orgId === orgId)
+  }
+
+  const exerciseId = String(row.exerciseId || '')
+  if (!exerciseId || invalidExerciseIds.has(exerciseId)) return false
+  const exercise = await store.recordFor(orgId, 'exercises', exerciseId)
+  // Legacy/on-site imports can contain child rows without a mirrored exercise.
+  // They are retained for compatibility; a known parent must always match.
+  return !exercise || String(exercise.json?.orgId || '') === orgId
+}
+
+/**
  * One sync round: apply everything the client pushed, then return everything
  * it has not seen. Identical in behaviour to the on-site server — the decision
  * for each record comes from the shared rules module.
@@ -190,6 +213,11 @@ export async function handleSync(store, user, body) {
   const accepted = {}
   const conflicts = []
   const pushedIds = {}
+  const invalidExerciseIds = new Set(
+    (Array.isArray(changes.exercises) ? changes.exercises : [])
+      .filter((row) => row && typeof row === 'object' && String(row.orgId || '') !== orgId)
+      .map((row) => String(row.id || '')),
+  )
 
   for (const [tableName, rows] of Object.entries(changes)) {
     if (!SYNC_TABLES.has(tableName) || !Array.isArray(rows)) continue
@@ -202,6 +230,8 @@ export async function handleSync(store, user, body) {
         const asUser = userFromInspector(row)
         if (asUser) await store.upsertUser(orgId, asUser)
       }
+
+      if (!(await recordBelongsToOrganization(store, orgId, tableName, row, invalidExerciseIds))) continue
 
       const existing = await store.recordFor(orgId, tableName, String(row.id || ''))
       const decision = decideRecord({ tableName, incoming: row, existing, since, actorId: user.id })
@@ -220,6 +250,7 @@ export async function handleSync(store, user, body) {
   for (const record of await store.recordsSince(orgId, since)) {
     if (!SYNC_TABLES.has(record.tableName)) continue
     if (pushedIds[record.tableName]?.has(record.id)) continue
+    if (!(await recordBelongsToOrganization(store, orgId, record.tableName, record.json))) continue
     ;(out[record.tableName] ||= []).push(record.json)
   }
 

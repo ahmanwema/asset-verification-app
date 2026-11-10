@@ -3,7 +3,7 @@ import { setMeta } from '../db/db'
 import { startFresh } from '../db/seed'
 import { useI18n, useT } from '../i18n'
 import { useSession } from '../state/session'
-import { registerOrganization, setToken, syncNow } from '../lib/sync'
+import { ACTIVE_ORG_KEY, registerOrganization, setToken, syncNow } from '../lib/sync'
 import { Button, Field, TextArea, TextInput } from '../components/ui'
 import type { StringKey } from '../i18n/strings'
 
@@ -55,6 +55,7 @@ export default function RegisterPage({ onBack }: { onBack: () => void }) {
     // new organization pulled down.
     await startFresh()
     await setToken(res.token)
+    await setMeta(ACTIVE_ORG_KEY, res.organization.id)
     await setMeta('syncServerUrl', '/api')
     await syncNow()
 
