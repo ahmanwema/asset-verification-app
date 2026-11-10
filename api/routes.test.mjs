@@ -144,7 +144,11 @@ describe('sync route', () => {
       headers: auth,
       body: JSON.stringify({
         since: 0,
-        changes: { entries: [{ id: 'en_1', quantity: 3, inspectorId: 'insp_1', updatedAt: Date.now() }] },
+        changes: {
+          entries: [
+            { id: 'en_1', exerciseId: 'ex_1', quantity: 3, inspectorId: 'insp_1', updatedAt: Date.now() },
+          ],
+        },
       }),
     })
     expect(push.status).toBe(200)

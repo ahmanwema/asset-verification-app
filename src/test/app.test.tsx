@@ -290,6 +290,75 @@ describe('capture & identify', () => {
   })
 })
 
+describe('adding an asset type from a photo', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses English as the default name and lets the admin edit every AI suggestion before saving', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('Setup'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Asset types' }))
+    await setMeta('syncToken', 'test-token')
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes('/vision/identify')) {
+          return new Response(
+            JSON.stringify({
+              model: 'gpt-5.4-mini',
+              result: {
+                assetTypeCode: '',
+                itemName: 'Compact Projector',
+                itemNameSw: 'Projekta Ndogo',
+                category: 'ICT Equipment',
+                itemType: 'Portable projector',
+                quantity: 1,
+                condition: 'G',
+                material: 'Plastic',
+                colour: 'White',
+                brand: '',
+                model: '',
+                serialNumber: '',
+                additionalFeatures: '',
+                description: 'A compact portable projector',
+                specificPosition: '',
+                remarks: '',
+                confidence: 0.91,
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        return new Response('{}', { status: 401, headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+
+    const upload = await screen.findByText('Choose a photo & identify')
+    const input = upload.closest('label')?.querySelector('input[type="file"]') as HTMLInputElement
+    const photo = new File([new Uint8Array([1, 2, 3])], 'unknown.jpg', { type: 'image/jpeg' })
+    fireEvent.change(input, { target: { files: [photo] } })
+
+    expect(await screen.findByDisplayValue('Compact Projector')).toBeTruthy()
+    expect(screen.getByDisplayValue('Projekta Ndogo')).toBeTruthy()
+    expect(screen.getByDisplayValue('ICT Equipment')).toBeTruthy()
+    expect(screen.getByText(/confidence: 91%/i)).toBeTruthy()
+
+    const englishName = screen.getByLabelText('English name (default)')
+    fireEvent.change(englishName, { target: { value: 'Portable Projector' } })
+    fireEvent.change(screen.getByLabelText('Swahili name'), { target: { value: 'Projekta Inayobebeka' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Accept and add asset type' }))
+
+    await waitFor(async () => {
+      const saved = (await db.assetTypes.toArray()).find((item) => item.name === 'Portable Projector')
+      expect(saved?.nameSw).toBe('Projekta Inayobebeka')
+      expect(saved?.category).toBe('ICT Equipment')
+      expect(saved?.syncStatus).toBe('pending')
+    })
+  })
+})
+
 describe('edit history', () => {
   it('logs a change, flags the field and lists it in the history section', async () => {
     await signIn()

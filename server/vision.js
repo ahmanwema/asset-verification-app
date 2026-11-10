@@ -70,7 +70,9 @@ Reply with a single JSON object and nothing else, using exactly these keys:
 
 {
   "assetTypeCode": string,      // closest code from the catalog supplied below, or "" if nothing matches
-  "itemName": string,           // short name, e.g. "Student Chair"
+  "itemName": string,           // short ENGLISH name, e.g. "Student Chair"; this is the default catalog name
+  "itemNameSw": string,         // short KISWAHILI translation suitable for the catalog
+  "category": string,           // broad class, e.g. "Furniture", "ICT Equipment", "Electrical", "Vehicle"
   "itemType": string,           // sub-type, e.g. "Top-Loading Water Dispenser", "Single-seater student chair"
   "quantity": number,           // how many identical items of this type are visible; 1 if unsure
   "condition": string,          // one of "G", "F", "P", "U"
@@ -92,7 +94,7 @@ Condition rubric:
 - "P" (Poor): heavily damaged, unstable or barely usable; needs repair.
 - "U" (Unserviceable): broken, unusable, or beyond economic repair.
 
-Write all text values in English and in sentence case. Every field is a string except "quantity" and "confidence", which are numbers.`
+Write text values in English and in sentence case, except itemNameSw which must be in Kiswahili. Every field is a string except "quantity" and "confidence", which are numbers.`
 
 /** At most this many views per request: each one costs tokens and latency. */
 export const MAX_IMAGES = 4
@@ -108,6 +110,10 @@ export function buildUserContent(context, dataUrls) {
   const expected = context?.expectedAssetName
     ? `\nThe inspector took this photo while recording "${context.expectedAssetName}". Prefer that identification if the photograph is consistent with it.`
     : ''
+  const catalogInstruction =
+    context?.purpose === 'catalog'
+      ? '\nThe inspector is creating a NEW asset type in the catalog. Give a concise generic English itemName as the default name, its concise Kiswahili translation in itemNameSw, and a useful fixed-asset category. The inspector will review and edit all suggestions before saving.'
+      : ''
 
   const urls = Array.isArray(dataUrls) ? dataUrls : [dataUrls]
 
@@ -124,7 +130,7 @@ export function buildUserContent(context, dataUrls) {
       type: 'text',
       text: `Asset type catalog for this exercise:\n${catalogText}\n\nLocation: ${
         where || 'unknown'
-      }.${expected}${multi}\n\nIdentify the item in the photograph${
+      }.${expected}${catalogInstruction}${multi}\n\nIdentify the item in the photograph${
         urls.length > 1 ? 's' : ''
       } and reply with the JSON object.`,
     },
@@ -135,6 +141,8 @@ export function buildUserContent(context, dataUrls) {
 const STRING_FIELDS = [
   'assetTypeCode',
   'itemName',
+  'itemNameSw',
+  'category',
   'itemType',
   'condition',
   'material',

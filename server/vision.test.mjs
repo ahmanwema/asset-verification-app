@@ -61,6 +61,8 @@ function replyWith(content, status = 200) {
 const GOOD_RESULT = {
   assetTypeCode: 'sc',
   itemName: 'Student Chair',
+  itemNameSw: 'Kiti cha Mwanafunzi',
+  category: 'Furniture',
   itemType: 'Single-seater student chair',
   quantity: 4,
   condition: 'f',
@@ -121,6 +123,18 @@ describe('request shape', () => {
     expect(image.image_url.url).toBe(`data:image/jpeg;base64,${IMAGE}`)
   })
 
+  it('asks for editable bilingual catalog suggestions when adding an asset type', () => {
+    const content = buildUserContent(
+      { purpose: 'catalog', assetTypes: [] },
+      [`data:image/jpeg;base64,${IMAGE}`],
+    )
+    const text = content.find((part) => part.type === 'text').text
+    expect(text).toContain('NEW asset type')
+    expect(text).toContain('English itemName as the default name')
+    expect(text).toContain('Kiswahili translation')
+    expect(text).toContain('review and edit')
+  })
+
   it('honours a per-device model override but ignores an unknown one', async () => {
     replyWith(GOOD_RESULT)
     await handleVisionIdentify(body({ model: 'gpt-4o-mini' }))
@@ -151,6 +165,9 @@ describe('response handling', () => {
     expect(payload.result.quantity).toBe(4)
     expect(payload.result.confidence).toBeCloseTo(0.82)
     expect(payload.result.material).toBe('Wooden seat and backrest with metal frame')
+    expect(payload.result.itemName).toBe('Student Chair')
+    expect(payload.result.itemNameSw).toBe('Kiti cha Mwanafunzi')
+    expect(payload.result.category).toBe('Furniture')
     expect(payload.result.brand).toBe('')
   })
 

@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db, uid } from '../db/db'
 import { sha256 } from '../lib/hash'
 import { deriveCode, deriveRoomCode } from '../lib/tags'
-import { formatBytes, storageEstimate } from '../lib/photos'
+import { compressImage, formatBytes, storageEstimate } from '../lib/photos'
 import { createTeamAccount, getToken, resetLocalData, syncDiagnostics } from '../lib/sync'
 import type { StringKey } from '../i18n/strings'
 import { startFresh } from '../db/seed'
@@ -11,6 +11,7 @@ import {
   VISION_MODELS,
   checkVisionAvailability,
   getVisionModel,
+  identifyPhoto,
   setVisionModel,
   type VisionAvailability,
   type VisionModel,
@@ -446,7 +447,17 @@ function FloorsTab({
 function AssetsTab({ canEdit, orgId, flash }: { canEdit: boolean; orgId?: string; flash: (m: string) => void }) {
   const t = useT()
   const [name, setName] = useState('')
+  const [nameSw, setNameSw] = useState('')
   const [code, setCode] = useState('')
+  const [category, setCategory] = useState('Other')
+  const [identifying, setIdentifying] = useState(false)
+  const [aiSuggested, setAiSuggested] = useState(false)
+  const [confidence, setConfidence] = useState(0)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+  }, [previewUrl])
 
   const data = useLiveQuery(async () => {
     const [assetTypes, entries] = await Promise.all([db.assetTypes.orderBy('sortOrder').toArray(), db.entries.toArray()])
@@ -470,15 +481,64 @@ function AssetsTab({ canEdit, orgId, flash }: { canEdit: boolean; orgId?: string
       id: uid('at_'),
       orgId,
       name: n,
+      nameSw: nameSw.trim(),
       code: c,
-      category: 'Other',
+      category: category.trim() || 'Other',
       sortOrder: assetTypes.length,
       active: true,
       updatedAt: Date.now(),
       syncStatus: 'pending',
     })
     setName('')
+    setNameSw('')
     setCode('')
+    setCategory('Other')
+    setAiSuggested(false)
+    setConfidence(0)
+    setPreviewUrl(null)
+  }
+
+  async function identifyAsset(files: FileList | null) {
+    const file = files?.[0]
+    if (!file) return
+
+    setIdentifying(true)
+    setAiSuggested(false)
+    setPreviewUrl(URL.createObjectURL(file))
+    try {
+      const { blob } = await compressImage(file)
+      const outcome = await identifyPhoto(blob, { purpose: 'catalog' })
+      if (!outcome.ok) {
+        const messages: Record<string, StringKey> = {
+          offline: 'ai.offline',
+          'not-connected': 'ai.notConnected',
+          'vision-not-configured': 'ai.notConfigured',
+          'vision-timeout': 'ai.timeout',
+          'vision-unreachable': 'ai.unreachable',
+          'vision-upstream': 'ai.upstream',
+          'vision-bad-response': 'ai.badResponse',
+          unauthorized: 'ai.notConnected',
+        }
+        flash(t(messages[outcome.error] ?? 'ai.failed'))
+        return
+      }
+
+      const suggestion = outcome.result
+      if (!suggestion.itemName.trim()) {
+        flash(t('ai.failed'))
+        return
+      }
+      setName(suggestion.itemName.trim())
+      setNameSw((suggestion.itemNameSw ?? '').trim())
+      setCode(deriveCode(suggestion.itemName.trim()).toUpperCase())
+      setCategory((suggestion.category ?? '').trim() || 'Other')
+      setConfidence(suggestion.confidence)
+      setAiSuggested(true)
+    } catch {
+      flash(t('ai.failed'))
+    } finally {
+      setIdentifying(false)
+    }
   }
 
   async function remove(at: AssetType) {
@@ -490,7 +550,7 @@ function AssetsTab({ canEdit, orgId, flash }: { canEdit: boolean; orgId?: string
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-3">
       <p className="text-xs text-slate-500">
         {assetTypes.filter((a) => a.active).length} / {assetTypes.length} {t('common.items')}
       </p>
@@ -553,19 +613,95 @@ function AssetsTab({ canEdit, orgId, flash }: { canEdit: boolean; orgId?: string
       </Card>
 
       {canEdit && (
-        <Card className="space-y-2 p-3">
-          <div className="flex gap-2">
-            <TextInput placeholder={t('common.name')} value={name} onChange={(e) => setName(e.target.value)} />
-            <TextInput
-              placeholder={name.trim() ? deriveCode(name.trim()) : t('common.code')}
-              value={code}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-              className="w-20 text-center font-mono"
-              aria-label={t('common.code')}
-            />
+        <Card className="order-first space-y-3 p-3">
+          <div>
+            <p className="text-sm font-bold text-slate-800">{t('ai.catalogTitle')}</p>
+            <p className="mt-0.5 text-xs text-slate-500">{t('ai.catalogHint')}</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className={`btn-secondary flex cursor-pointer items-center justify-center text-center ${identifying ? 'pointer-events-none opacity-60' : ''}`}>
+              {identifying ? t('ai.identifying') : t('ai.capture')}
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                disabled={identifying}
+                onChange={(e) => {
+                  void identifyAsset(e.target.files)
+                  e.currentTarget.value = ''
+                }}
+              />
+            </label>
+            <label className={`btn-secondary flex cursor-pointer items-center justify-center text-center ${identifying ? 'pointer-events-none opacity-60' : ''}`}>
+              {t('ai.uploadAndIdentify')}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={identifying}
+                onChange={(e) => {
+                  void identifyAsset(e.target.files)
+                  e.currentTarget.value = ''
+                }}
+              />
+            </label>
+          </div>
+
+          {(previewUrl || aiSuggested) && (
+            <div className="rounded-xl border border-brand-200 bg-brand-50 p-3">
+              <div className="flex items-start gap-3">
+                {previewUrl && <img src={previewUrl} alt="" className="h-16 w-16 rounded-lg object-cover" />}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-brand-900">
+                    {identifying ? t('ai.identifying') : aiSuggested ? t('ai.catalogReview') : t('ai.failed')}
+                  </p>
+                  {aiSuggested && (
+                    <p className="mt-1 text-xs text-brand-800">
+                      {t('ai.confidence')}: {Math.round(confidence * 100)}%
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-[minmax(0,1fr)_5rem] gap-2">
+            <Field label={t('setup.assetNameEn')}>
+              <TextInput
+                placeholder={t('setup.assetNameEn')}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </Field>
+            <Field label={t('common.code')}>
+              <TextInput
+                placeholder={name.trim() ? deriveCode(name.trim()) : t('common.code')}
+                value={code}
+                onChange={(e) => setCode(e.target.value.toUpperCase())}
+                className="text-center font-mono"
+              />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label={t('setup.assetNameSw')}>
+              <TextInput
+                placeholder={t('setup.assetNameSw')}
+                value={nameSw}
+                onChange={(e) => setNameSw(e.target.value)}
+              />
+            </Field>
+            <Field label={t('common.category')}>
+              <TextInput
+                placeholder={t('common.category')}
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+              />
+            </Field>
           </div>
           <Button full onClick={() => void add()}>
-            {t('setup.addAsset')}
+            {aiSuggested ? t('setup.acceptAssetSuggestion') : t('setup.addAsset')}
           </Button>
         </Card>
       )}

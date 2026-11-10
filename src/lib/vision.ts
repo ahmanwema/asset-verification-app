@@ -9,6 +9,10 @@ export type VisionModel = (typeof VISION_MODELS)[number]
 export interface VisionResult {
   assetTypeCode: string
   itemName: string
+  /** Suggested Swahili catalog name; English itemName remains the default. */
+  itemNameSw: string
+  /** Suggested fixed-asset category, e.g. Furniture or ICT Equipment. */
+  category: string
   itemType: string
   quantity: number
   condition: Condition
@@ -68,8 +72,12 @@ export async function checkVisionAvailability(): Promise<VisionAvailability | nu
 }
 
 /** Catalog and location give the model something to match against. */
-async function buildContext(opts: { roomId: string; expectedAssetName?: string }) {
-  const room = await db.rooms.get(opts.roomId)
+async function buildContext(opts: {
+  roomId?: string
+  expectedAssetName?: string
+  purpose?: 'entry' | 'catalog'
+}) {
+  const room = opts.roomId ? await db.rooms.get(opts.roomId) : undefined
   const floor = room ? await db.floors.get(room.floorId) : undefined
   const assetTypes = await db.assetTypes.orderBy('sortOrder').toArray()
   return {
@@ -77,6 +85,7 @@ async function buildContext(opts: { roomId: string; expectedAssetName?: string }
     roomName: room?.name ?? '',
     floorName: floor?.name ?? '',
     expectedAssetName: opts.expectedAssetName ?? '',
+    purpose: opts.purpose ?? 'entry',
   }
 }
 
@@ -98,7 +107,7 @@ export const MAX_IDENTIFY_IMAGES = 4
  */
 export async function identifyPhoto(
   input: Blob | Blob[],
-  opts: { roomId: string; expectedAssetName?: string },
+  opts: { roomId?: string; expectedAssetName?: string; purpose?: 'entry' | 'catalog' },
 ): Promise<VisionOutcome> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' }
 
