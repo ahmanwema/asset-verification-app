@@ -57,6 +57,8 @@ export const en = {
   'common.room': 'Room',
   'common.inspector': 'Inspector',
   'common.empty': 'Nothing here yet',
+  'common.noResults': 'No matching results',
+  'common.showingResults': 'Showing {shown} of {total}',
 
   'condition.G': 'Good',
   'condition.F': 'Fair',
@@ -64,6 +66,9 @@ export const en = {
   'condition.U': 'Unserviceable',
 
   'entry.assetType': 'Asset type',
+  'entry.searchAsset': 'Search asset types',
+  'entry.searchAssetPlaceholder': 'Search by name, code or categoryâ€¦',
+  'entry.searchAssetHint': 'Try another asset name, code or category.',
   'entry.quantity': 'Quantity',
   'entry.serial': 'Serial number',
   'entry.serialHint': 'From the label or sticker',
@@ -221,6 +226,9 @@ export const en = {
   'room.unlistedFound': '{n} unlisted',
   'room.pickFloor': 'Pick a floor',
   'room.pickRoom': 'Pick a room',
+  'room.search': 'Search rooms',
+  'room.searchPlaceholder': 'Search by room name or codeâ€¦',
+  'room.searchHint': 'Try another room name or code.',
 
   'status.not_started': 'Not started',
   'status.in_progress': 'In progress',
@@ -474,6 +482,8 @@ export const sw: Record<StringKey, string> = {
   'common.room': 'Chumba',
   'common.inspector': 'Mkaguzi',
   'common.empty': 'Hakuna kitu bado',
+  'common.noResults': 'Hakuna matokeo yanayolingana',
+  'common.showingResults': 'Inaonyesha {shown} kati ya {total}',
 
   'condition.G': 'Nzuri',
   'condition.F': 'Wastani',
@@ -481,6 +491,9 @@ export const sw: Record<StringKey, string> = {
   'condition.U': 'Haifai',
 
   'entry.assetType': 'Aina ya mali',
+  'entry.searchAsset': 'Tafuta aina ya mali',
+  'entry.searchAssetPlaceholder': 'Tafuta kwa jina, code au kundiâ€¦',
+  'entry.searchAssetHint': 'Jaribu jina, code au kundi jingine.',
   'entry.quantity': 'Idadi',
   'entry.serial': 'Namba ya kutambulisha',
   'entry.serialHint': 'Kutoka kwenye lebo ya kifaa',
@@ -638,6 +651,9 @@ export const sw: Record<StringKey, string> = {
   'room.unlistedFound': '{n} si orodhani',
   'room.pickFloor': 'Chagua ghorofa',
   'room.pickRoom': 'Chagua chumba',
+  'room.search': 'Tafuta vyumba',
+  'room.searchPlaceholder': 'Tafuta kwa jina au code ya chumbaâ€¦',
+  'room.searchHint': 'Jaribu jina au code nyingine ya chumba.',
 
   'status.not_started': 'Haijaanza',
   'status.in_progress': 'Inaendelea',

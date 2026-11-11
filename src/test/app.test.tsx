@@ -113,6 +113,42 @@ describe('inspection walkthrough', () => {
   })
 })
 
+describe('searching long room and asset lists', () => {
+  it('filters rooms by name or code without changing floor progress', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('Ground Floor'))
+
+    const search = await screen.findByLabelText('Search rooms')
+    fireEvent.change(search, { target: { value: 'LBO' } })
+
+    expect(await screen.findByText('Lab Biology Office')).toBeTruthy()
+    expect(screen.queryByText('Staff Room Nursery')).toBeNull()
+    expect(screen.getByText('0/17 rooms')).toBeTruthy()
+
+    fireEvent.change(search, { target: { value: 'room-name-that-does-not-exist' } })
+    expect(await screen.findByText('No matching results')).toBeTruthy()
+  })
+
+  it('filters asset types by English, Swahili, code or category while keeping total progress', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+
+    const search = await screen.findByLabelText('Search asset types')
+    fireEvent.change(search, { target: { value: 'mwanafunzi' } })
+
+    expect(await screen.findByText('Student Chair')).toBeTruthy()
+    expect(screen.getByText('Student Table')).toBeTruthy()
+    expect(screen.queryByText('Smart Board')).toBeNull()
+    expect(screen.getByText('Showing 2 of 16')).toBeTruthy()
+    expect(screen.getByText('0/16 items checked')).toBeTruthy()
+
+    fireEvent.change(search, { target: { value: 'WD' } })
+    expect(await screen.findByText('Water Dispenser')).toBeTruthy()
+    expect(screen.queryByText('Student Chair')).toBeNull()
+  })
+})
+
 describe('more details', () => {
   async function openChairForm() {
     await signIn()

@@ -17,6 +17,7 @@ import {
   SectionTitle,
   Sheet,
   TextArea,
+  TextInput,
   Toast,
 } from '../components/ui'
 import { CONDITIONS, type Condition, type InspectionEntry } from '../types'
@@ -31,6 +32,7 @@ export default function RoomPage() {
   const [signSheet, setSignSheet] = useState(false)
   const [signNotes, setSignNotes] = useState('')
   const [busy, setBusy] = useState(false)
+  const [assetSearch, setAssetSearch] = useState('')
 
   const data = useLiveQuery(async () => {
     const room = await db.rooms.get(roomId)
@@ -67,6 +69,13 @@ export default function RoomPage() {
   const itemsFound = entries.filter((e) => !e.notPresent).reduce((n, e) => n + e.quantity, 0)
   const tagCount = entries.reduce((n, e) => n + e.tagNumbers.length, 0)
   const signedBy = signoff ? inspectors.find((i) => i.id === signoff.inspectorId)?.name : undefined
+  const assetNeedle = assetSearch.trim().toLocaleLowerCase()
+  const visibleAssetTypes = assetTypes.filter((assetType) => {
+    if (!assetNeedle) return true
+    return `${assetType.name} ${assetType.nameSw ?? ''} ${assetType.code} ${assetType.category}`
+      .toLocaleLowerCase()
+      .includes(assetNeedle)
+  })
 
   async function quickNotPresent(assetTypeId: string) {
     if (!exercise || !inspector || !floor) return
@@ -150,8 +159,22 @@ export default function RoomPage() {
         {t('entry.assetType')}
       </SectionTitle>
 
+      <TextInput
+        type="search"
+        aria-label={t('entry.searchAsset')}
+        placeholder={t('entry.searchAssetPlaceholder')}
+        value={assetSearch}
+        onChange={(event) => setAssetSearch(event.target.value)}
+      />
+
+      {assetNeedle && (
+        <p className="text-xs text-slate-500">
+          {t('common.showingResults', { shown: visibleAssetTypes.length, total: assetTypes.length })}
+        </p>
+      )}
+
       <ul className="space-y-2">
-        {assetTypes.map((at) => {
+        {visibleAssetTypes.map((at) => {
           const entry = byType.get(at.id)
           return (
             <li key={at.id}>
@@ -167,6 +190,10 @@ export default function RoomPage() {
           )
         })}
       </ul>
+
+      {visibleAssetTypes.length === 0 && (
+        <EmptyState title={t('common.noResults')} hint={t('entry.searchAssetHint')} />
+      )}
 
       {unlisted.length > 0 && (
         <>

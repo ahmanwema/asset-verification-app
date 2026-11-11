@@ -1,15 +1,17 @@
+import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
 import { loadFloorProgress } from '../lib/queries'
 import { useSession } from '../state/session'
 import { useT } from '../i18n'
-import { EmptyState, ProgressBar, STATUS_STYLE, SectionTitle } from '../components/ui'
+import { EmptyState, ProgressBar, STATUS_STYLE, SectionTitle, TextInput } from '../components/ui'
 
 export default function FloorPage() {
   const { floorId = '' } = useParams()
   const t = useT()
   const { exercise } = useSession()
+  const [search, setSearch] = useState('')
 
   const floor = useLiveQuery(() => db.floors.get(floorId), [floorId])
   const progress = useLiveQuery(async () => {
@@ -19,6 +21,12 @@ export default function FloorPage() {
   }, [exercise?.id, floorId])
 
   if (!floor) return <EmptyState title={t('common.empty')} />
+
+  const needle = search.trim().toLocaleLowerCase()
+  const visibleRooms = (progress?.rooms ?? []).filter((rp) => {
+    if (!needle) return true
+    return `${rp.room.name} ${rp.room.code}`.toLocaleLowerCase().includes(needle)
+  })
 
   return (
     <div className="space-y-4">
@@ -55,8 +63,16 @@ export default function FloorPage() {
 
       <SectionTitle>{t('room.pickRoom')}</SectionTitle>
 
+      <TextInput
+        type="search"
+        aria-label={t('room.search')}
+        placeholder={t('room.searchPlaceholder')}
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+      />
+
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {progress?.rooms.map((rp) => (
+        {visibleRooms.map((rp) => (
           <Link
             key={rp.room.id}
             to={`/room/${rp.room.id}`}
@@ -77,6 +93,9 @@ export default function FloorPage() {
           </Link>
         ))}
       </div>
+      {progress && visibleRooms.length === 0 && (
+        <EmptyState title={t('common.noResults')} hint={t('room.searchHint')} />
+      )}
     </div>
   )
 }
