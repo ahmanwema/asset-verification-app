@@ -55,7 +55,13 @@ export default function InspectPage() {
           itemsFound: rooms.reduce((total, room) => total + room.itemsFound, 0),
         }
       })
-      .filter((fp) => fp.rooms.length > 0)
+      .filter((fp) => {
+        if (fp.rooms.length > 0) return true
+        const floorBlockId = fp.floor.blockId ?? ''
+        return blockId
+          ? floorBlockId === blockId
+          : !floorBlockId || !blockIds.has(floorBlockId)
+      })
 
   // Keep every configured block visible, including a newly created block that
   // has not received any rooms yet. Setup is the source of truth for the block

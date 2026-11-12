@@ -66,7 +66,18 @@ describe('blocks', () => {
 
     fireEvent.change(screen.getByPlaceholderText('Block name'), { target: { value: 'Block B' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add block' }))
-    await waitFor(async () => expect(await db.blocks.filter((candidate) => candidate.name === 'Block B').first()).toBeTruthy())
+    const blockB = await waitFor(async () => {
+      const row = await db.blocks.filter((candidate) => candidate.name === 'Block B').first()
+      expect(row).toBeTruthy()
+      return row!
+    })
+    const blockBSection = (await screen.findByDisplayValue('Block B')).closest('section') as HTMLElement
+    fireEvent.change(within(blockBSection).getByPlaceholderText('Floor name'), { target: { value: 'Ground' } })
+    fireEvent.click(within(blockBSection).getByRole('button', { name: 'Add floor' }))
+    await waitFor(async () => {
+      const floor = await db.floors.filter((candidate) => candidate.name === 'Ground').first()
+      expect(floor?.blockId).toBe(blockB.id)
+    })
 
     const floorHeading = await screen.findByText('1st Floor')
     fireEvent.click(floorHeading)
@@ -86,7 +97,10 @@ describe('blocks', () => {
     fireEvent.click(screen.getByText('Inspect'))
     expect(await screen.findByText('Pick a block')).toBeTruthy()
     expect(screen.queryByText('1st Floor')).toBeNull()
-    expect(await screen.findByText('Block B')).toBeTruthy()
+    const blockBLink = (await screen.findByText('Block B')).closest('a') as HTMLAnchorElement
+    fireEvent.click(blockBLink)
+    expect(await screen.findByText('Ground')).toBeTruthy()
+    fireEvent.click(screen.getByText('All blocks'))
 
     const adminLink = (await screen.findByText('Administration Block')).closest('a') as HTMLAnchorElement
     const mainLink = screen.getByText('Main Block').closest('a') as HTMLAnchorElement

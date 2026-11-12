@@ -252,8 +252,7 @@ function FloorsTab({
   const t = useT()
   const [openFloor, setOpenFloor] = useState<string | null>(null)
   const [newBlock, setNewBlock] = useState('')
-  const [newFloor, setNewFloor] = useState('')
-  const [newFloorBlock, setNewFloorBlock] = useState('')
+  const [newFloorNames, setNewFloorNames] = useState<Record<string, string>>({})
   const [newRoom, setNewRoom] = useState('')
 
   const data = useLiveQuery(async () => {
@@ -294,23 +293,24 @@ function FloorsTab({
     }
     await db.blocks.add(block)
     setNewBlock('')
-    if (!newFloorBlock) setNewFloorBlock(block.id)
   }
 
-  async function addFloor() {
-    const name = newFloor.trim()
+  async function addFloor(blockId: string) {
+    const name = (newFloorNames[blockId] ?? '').trim()
     if (!name) return
+    const id = uid('fl_')
     await db.floors.add({
-      id: uid('fl_'),
+      id,
       exerciseId: exId,
-      blockId: newFloorBlock || undefined,
+      blockId,
       name,
       code: deriveCode(name, 3),
       sortOrder: floors.length,
       updatedAt: Date.now(),
       syncStatus: 'pending',
     })
-    setNewFloor('')
+    setNewFloorNames((current) => ({ ...current, [blockId]: '' }))
+    setOpenFloor(id)
   }
 
   async function addRoom(floorId: string) {
@@ -559,28 +559,27 @@ function FloorsTab({
               </p>
             </Card>
             <div className="space-y-2 pl-2">{blockFloors.map(floorCard)}</div>
+            {canEdit && (
+              <Card className="space-y-2 border-dashed border-brand-200 p-3">
+                <SectionTitle>{t('setup.addFloorTo', { block: block.name })}</SectionTitle>
+                <div className="flex gap-2">
+                  <TextInput
+                    placeholder={t('setup.floorName')}
+                    value={newFloorNames[block.id] ?? ''}
+                    onChange={(e) =>
+                      setNewFloorNames((current) => ({ ...current, [block.id]: e.target.value }))
+                    }
+                  />
+                  <Button className="shrink-0 px-3" onClick={() => void addFloor(block.id)}>
+                    {t('setup.addFloor')}
+                  </Button>
+                </div>
+              </Card>
+            )}
           </section>
         )
       })}
 
-      {canEdit && (
-        <Card className="space-y-2 p-3">
-          <Select value={newFloorBlock} onChange={(e) => setNewFloorBlock(e.target.value)}>
-            <option value="">{t('setup.unassignedBlock')}</option>
-            {blocks.map((block) => <option key={block.id} value={block.id}>{block.name}</option>)}
-          </Select>
-          <div className="flex gap-2">
-          <TextInput
-            placeholder={t('setup.floorName')}
-            value={newFloor}
-            onChange={(e) => setNewFloor(e.target.value)}
-          />
-          <Button className="shrink-0 px-3" onClick={() => void addFloor()}>
-            {t('setup.addFloor')}
-          </Button>
-          </div>
-        </Card>
-      )}
     </div>
   )
 }
