@@ -79,13 +79,15 @@ describe('financial records and reports', () => {
     })
     await saveFinancialRecord(
       entry,
-      { ...record, tagNumber: entry.tagNumbers[0], updatedBy: fx.inspector.id },
-      fx.inspector.id,
+      { ...record, tagNumber: entry.tagNumbers[0], updatedBy: fx.inspector2.id },
+      fx.inspector2.id,
     )
 
     const stored = await db.entries.get(entry.id)
     expect(stored?.financialRecords).toHaveLength(1)
     expect(stored?.syncStatus).toBe('pending')
+    expect(stored?.inspectorId).toBe(fx.inspector.id)
+    expect(stored?.editHistory.at(-1)?.editedBy).toBe(fx.inspector2.id)
 
     const bundle = await buildReportBundle(fx.exercise.id)
     expect(bundle.depreciation).toHaveLength(2)

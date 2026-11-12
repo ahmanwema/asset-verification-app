@@ -187,6 +187,10 @@ export const en = {
   'history.title': 'Edit history',
   'history.count': '{n} changes recorded',
   'history.edited': 'edited',
+  'history.itemTitle': 'Item history',
+  'history.recordedBy': 'Recorded by',
+  'history.editedBy': 'Edited by',
+  'history.noEdits': 'No edits after the original recording',
 
   'ai.capture': 'Capture & identify',
   'ai.uploadAndIdentify': 'Choose a photo & identify',
@@ -624,6 +628,10 @@ export const sw: Record<StringKey, string> = {
   'history.title': 'Historia ya mabadiliko',
   'history.count': 'Mabadiliko {n} yamerekodiwa',
   'history.edited': 'imebadilishwa',
+  'history.itemTitle': 'Historia ya item',
+  'history.recordedBy': 'Imerekodiwa na',
+  'history.editedBy': 'Imebadilishwa na',
+  'history.noEdits': 'Hakuna mabadiliko baada ya kurekodiwa',
 
   'ai.capture': 'Piga picha na tambua',
   'ai.uploadAndIdentify': 'Chagua picha na tambua',

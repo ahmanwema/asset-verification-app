@@ -255,6 +255,7 @@ describe('edit history', () => {
       expect(h.editedBy).toBe(fx.inspector2.id)
       expect(h.editedAt).toBeGreaterThanOrEqual(before)
     }
+    expect(row?.inspectorId).toBe(fx.inspector.id)
   })
 
   it('logs the detail fields, including going from blank to filled', async () => {

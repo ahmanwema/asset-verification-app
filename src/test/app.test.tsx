@@ -985,6 +985,8 @@ describe('opening an asset from a printed QR label', () => {
 
     expect(await screen.findByText(entry.tagNumbers[0], undefined, { timeout: 5000 })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Student Chair' })).toBeTruthy()
+    expect(screen.getByText('Item history')).toBeTruthy()
+    expect(screen.getByText('Recorded by')).toBeTruthy()
     expect(screen.getByText('Item photos')).toBeTruthy()
     expect(screen.getByText('No photo was taken for this item')).toBeTruthy()
   }, 10_000)

@@ -179,7 +179,10 @@ export async function saveEntry(draft: EntryDraft): Promise<InspectionEntry> {
     // should not read as a misplacement in the variance report.
     expectedRoomId:
       draft.expectedRoomId && draft.expectedRoomId !== draft.room.id ? draft.expectedRoomId : undefined,
-    inspectorId: draft.inspectorId,
+    // The inspector on the entry is its original recorder. Later editors are
+    // captured field-by-field in editHistory and must not replace this audit
+    // identity.
+    inspectorId: existing?.inspectorId ?? draft.inspectorId,
     inspectedAt: existing?.inspectedAt ?? Date.now(),
     isUnlistedItem: draft.isUnlistedItem,
     unlistedItemName: draft.isUnlistedItem ? draft.unlistedItemName?.trim() : undefined,

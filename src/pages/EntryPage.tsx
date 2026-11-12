@@ -1159,6 +1159,22 @@ export default function EntryPage() {
         </Field>
       </Card>
 
+      {existing && (
+        <Card className="p-4">
+          <p className="text-sm font-bold text-slate-800">{t('history.itemTitle')}</p>
+          <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+            {t('history.recordedBy')}
+          </p>
+          <p className="mt-0.5 text-sm font-semibold text-slate-800">
+            {whoById.get(existing.inspectorId) ?? t('common.inspector')}
+            <span className="font-normal text-slate-400"> · {fmtWhen(existing.inspectedAt)}</span>
+          </p>
+          {history.length === 0 && (
+            <p className="mt-2 text-xs text-slate-400">{t('history.noEdits')}</p>
+          )}
+        </Card>
+      )}
+
       {history.length > 0 && (
         <Card className="p-4">
           <button

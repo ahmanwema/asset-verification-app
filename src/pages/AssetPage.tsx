@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
 import { photoBlob } from '../lib/photos'
 import { entryConditionCounts } from '../lib/queries'
+import { EDIT_FIELD_LABEL } from '../lib/entries'
 import { ensureEntryPhotos, resyncEverything } from '../lib/sync'
 import { calculateDepreciation, financialRecordFor } from '../lib/depreciation'
 import { useOnline, useSession } from '../state/session'
@@ -25,13 +26,14 @@ export default function AssetPage() {
     const entry = await db.entries.get(entryId)
     if (!entry || entry.deleted) return null
     const room = await db.rooms.get(entry.roomId)
-    const [floor, assetType, entryExercise] = await Promise.all([
+    const [floor, assetType, entryExercise, inspectors] = await Promise.all([
       room ? db.floors.get(room.floorId) : undefined,
       entry.assetTypeId ? db.assetTypes.get(entry.assetTypeId) : undefined,
       db.exercises.get(entry.exerciseId),
+      db.inspectors.toArray(),
     ])
     const organization = entryExercise ? await db.organizations.get(entryExercise.orgId) : undefined
-    return { entry, room, floor, assetType, entryExercise, organization }
+    return { entry, room, floor, assetType, entryExercise, organization, inspectors }
   }, [entryId])
 
   // A phone opening a QR for the first time may not hold this entry yet. Pull
@@ -78,7 +80,8 @@ export default function AssetPage() {
     )
   }
 
-  const { entry, room, floor, assetType, entryExercise, organization } = data
+  const { entry, room, floor, assetType, entryExercise, organization, inspectors } = data
+  const whoById = new Map(inspectors.map((person) => [person.id, person.name]))
   const description = entry.isUnlistedItem
     ? (entry.unlistedItemName ?? t('entry.unlisted'))
     : (assetType?.name ?? t('asset.unknown'))
@@ -134,6 +137,40 @@ export default function AssetPage() {
             ))}
           </div>
         </div>
+      </Card>
+
+      <Card className="p-4">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-600">{t('history.itemTitle')}</h2>
+        <div className="mt-3 border-l-2 border-brand-100 pl-3">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+            {t('history.recordedBy')}
+          </p>
+          <p className="mt-0.5 text-sm font-semibold text-slate-800">
+            {whoById.get(entry.inspectorId) ?? t('common.inspector')}
+          </p>
+          <p className="text-xs text-slate-400">{new Date(entry.inspectedAt).toLocaleString()}</p>
+        </div>
+
+        {(entry.editHistory ?? []).length === 0 ? (
+          <p className="mt-3 text-xs text-slate-400">{t('history.noEdits')}</p>
+        ) : (
+          <ol className="mt-3 space-y-3 border-t border-slate-100 pt-3">
+            {[...(entry.editHistory ?? [])].reverse().map((change, index) => (
+              <li key={`${change.editedAt}-${change.field}-${index}`} className="border-l-2 border-slate-200 pl-3 text-xs">
+                <p className="font-bold text-slate-700">{EDIT_FIELD_LABEL[change.field] ?? change.field}</p>
+                <p className="mt-0.5 text-slate-600">
+                  <span className="text-slate-400 line-through">{change.oldValue || '—'}</span>
+                  <span aria-hidden="true"> → </span>
+                  <span className="font-semibold text-slate-900">{change.newValue || '—'}</span>
+                </p>
+                <p className="mt-0.5 text-[11px] text-slate-400">
+                  {t('history.editedBy')}: {whoById.get(change.editedBy) ?? t('common.inspector')} ·{' '}
+                  {new Date(change.editedAt).toLocaleString()}
+                </p>
+              </li>
+            ))}
+          </ol>
+        )}
       </Card>
 
       {(isAdmin || financial.complete) && (

@@ -160,7 +160,8 @@ export async function saveFinancialRecords(
     ...entry,
     financialRecords: records,
     editHistory: history,
-    inspectorId: actorId,
+    // Keep the original recorder; the finance editor is already in history.
+    inspectorId: entry.inspectorId,
     updatedAt: Date.now(),
     syncStatus: 'pending',
   })
