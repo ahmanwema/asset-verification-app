@@ -8,6 +8,7 @@ import type {
   EditRecord,
   Floor,
   InspectionEntry,
+  ItemDetail,
   Room,
   RoomSignoff,
 } from '../types'
@@ -42,6 +43,7 @@ export interface EntryDraft {
   /** Manual tag numbers override auto-generation when provided. */
   manualTagNumbers?: string[]
   photoIds?: string[]
+  itemDetails?: Array<Omit<ItemDetail, 'tagNumber'>>
 }
 
 export class ValidationError extends Error {}
@@ -80,6 +82,11 @@ const TRACKED_FIELDS: Array<{ field: string; label: string; render: (e: Inspecti
   { field: 'remarks', label: 'Remarks', render: (e) => e.remarks },
   { field: 'unlistedItemName', label: 'Item name', render: (e) => e.unlistedItemName ?? '' },
   { field: 'photos', label: 'Photos', render: (e) => String(e.photoIds.length) },
+  {
+    field: 'itemDetails',
+    label: 'Per-item details',
+    render: (e) => JSON.stringify(e.itemDetails ?? []),
+  },
   { field: 'expectedRoomId', label: 'Belongs to room', render: (e) => e.expectedRoomId ?? '' },
 ]
 
@@ -95,6 +102,19 @@ EDIT_FIELD_LABEL.financialDetails = 'Financial details'
  * slowed every sync on a weak connection. The oldest records are dropped first.
  */
 export const EDIT_HISTORY_LIMIT = 200
+
+/** Per-tag details with a backward-compatible fallback for older entries. */
+export function itemDetailFor(entry: InspectionEntry, tag: string, index?: number): ItemDetail {
+  const position = index ?? Math.max(0, entry.tagNumbers.indexOf(tag))
+  return entry.itemDetails?.find((detail) => detail.tagNumber === tag) ?? {
+    tagNumber: tag,
+    brand: entry.brand,
+    model: entry.model,
+    serialNumber: entry.serialNumbers[position] ?? entry.serialNumbers[0] ?? '',
+    photoIds: entry.photoIds,
+    representativePhotoIds: [],
+  }
+}
 
 /** Field-by-field comparison of a saved entry against its replacement. */
 function diffEntries(before: InspectionEntry, after: InspectionEntry, editedBy: string): EditRecord[] {
@@ -150,22 +170,40 @@ export async function saveEntry(draft: EntryDraft): Promise<InspectionEntry> {
         keepEntryId: id,
       })
 
+  const itemDetails: ItemDetail[] = tagNumbers.map((tagNumber, index) => {
+    const detail = draft.itemDetails?.[index]
+    const legacyPhotoIds = draft.photoIds ?? existing?.photoIds ?? []
+    return {
+      tagNumber,
+      brand: (detail?.brand ?? draft.brand).trim(),
+      model: (detail?.model ?? draft.model).trim(),
+      serialNumber: (detail?.serialNumber ?? draft.serialNumbers[index] ?? draft.serialNumbers[0] ?? '').trim(),
+      photoIds: detail?.photoIds ?? [],
+      representativePhotoIds: detail?.representativePhotoIds ?? (draft.itemDetails ? [] : legacyPhotoIds),
+    }
+  })
+  const allPhotoIds = [...new Set([
+    ...(draft.photoIds ?? existing?.photoIds ?? []),
+    ...itemDetails.flatMap((detail) => [...detail.photoIds, ...detail.representativePhotoIds]),
+  ])]
+
   const entry: InspectionEntry = {
     id,
     exerciseId: draft.exerciseId,
     roomId: draft.room.id,
     assetTypeId: draft.isUnlistedItem ? null : (draft.assetType?.id ?? null),
     quantity,
-    serialNumbers: draft.serialNumbers.map((s) => s.trim()).filter(Boolean),
-    model: draft.model.trim(),
-    brand: draft.brand.trim(),
+    serialNumbers: itemDetails.map((detail) => detail.serialNumber),
+    model: itemDetails[0]?.model ?? draft.model.trim(),
+    brand: itemDetails[0]?.brand ?? draft.brand.trim(),
     tagNumbers,
     condition: draft.condition,
     conditionBreakdown:
       !draft.notPresent && draft.conditionBreakdown && Object.keys(draft.conditionBreakdown).length > 0
         ? draft.conditionBreakdown
         : undefined,
-    photoIds: draft.photoIds ?? existing?.photoIds ?? [],
+    photoIds: allPhotoIds,
+    itemDetails,
     remarks: draft.remarks.trim(),
     financialRecords: existing?.financialRecords ?? [],
     material: (draft.material ?? '').trim(),

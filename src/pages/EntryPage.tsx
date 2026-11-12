@@ -38,6 +38,14 @@ interface DraftPhoto {
   width: number
   height: number
   persisted: boolean
+  itemIndexes: number[]
+  representative: boolean
+}
+
+interface UnitDraft {
+  brand: string
+  model: string
+  serialNumber: string
 }
 
 /**
@@ -86,6 +94,7 @@ interface FormSnapshot {
   description: string
   specificPosition: string
   unlistedName: string
+  unitDetails: UnitDraft[]
 }
 
 export default function EntryPage() {
@@ -141,6 +150,10 @@ export default function EntryPage() {
   const [perItemSerials, setPerItemSerials] = useState(false)
   const [model, setModel] = useState('')
   const [brand, setBrand] = useState('')
+  const [unitDetails, setUnitDetails] = useState<UnitDraft[]>([{ brand: '', model: '', serialNumber: '' }])
+  const [selectedUnits, setSelectedUnits] = useState<Set<number>>(new Set([0]))
+  const [sourceUnit, setSourceUnit] = useState(0)
+  const [photoMode, setPhotoMode] = useState<'item' | 'representative'>('item')
   const [condition, setCondition] = useState<Condition>('G')
   const [splitCondition, setSplitCondition] = useState(false)
   const [breakdown, setBreakdown] = useState<ConditionBreakdown>({})
@@ -188,9 +201,18 @@ export default function EntryPage() {
       setQuantity(e.notPresent ? 1 : Math.max(1, e.quantity))
       setUnlistedName(e.unlistedItemName ?? '')
       setSerials(e.serialNumbers.length > 0 ? e.serialNumbers : [''])
-      setPerItemSerials(e.serialNumbers.length > 1)
       setModel(e.model)
       setBrand(e.brand)
+      setUnitDetails(
+        e.tagNumbers.map((tag, index) => {
+          const detail = e.itemDetails?.find((item) => item.tagNumber === tag)
+          return {
+            brand: detail?.brand ?? e.brand,
+            model: detail?.model ?? e.model,
+            serialNumber: detail?.serialNumber ?? e.serialNumbers[index] ?? '',
+          }
+        }),
+      )
       setCondition(e.condition)
       setRemarks(e.remarks)
       setTagDraft(e.tagNumbers)
@@ -223,19 +245,35 @@ export default function EntryPage() {
         .equals(e.id)
         .toArray()
         .then((rows) =>
-          setPhotos(
-            rows.map((p) => ({
+          setPhotos(rows.map((p) => {
+            const exact = e.itemDetails?.flatMap((detail, index) =>
+              detail.photoIds.includes(p.id) ? [index] : [],
+            ) ?? []
+            const representative = e.itemDetails?.flatMap((detail, index) =>
+              detail.representativePhotoIds.includes(p.id) ? [index] : [],
+            ) ?? []
+            return {
               id: p.id,
               blob: photoBlob(p),
               width: p.width,
               height: p.height,
               persisted: true,
-            })),
-          ),
+              itemIndexes: exact.length > 0 ? exact : representative.length > 0 ? representative : e.tagNumbers.map((_, i) => i),
+              representative: representative.length > 0 || !e.itemDetails,
+            }
+          })),
         )
     }
     setLoaded(true)
   }, [ctx, loaded])
+
+  useEffect(() => {
+    setUnitDetails((current) =>
+      Array.from({ length: quantity }, (_, index) => current[index] ?? { brand: '', model: '', serialNumber: '' }),
+    )
+    setSelectedUnits(new Set(Array.from({ length: quantity }, (_, index) => index)))
+    setSourceUnit((current) => Math.min(current, Math.max(0, quantity - 1)))
+  }, [quantity])
 
   const assetCode = useMemo(() => {
     if (isUnlisted) return deriveCode(unlistedName || 'Unlisted')
@@ -262,7 +300,12 @@ export default function EntryPage() {
     }
   }, [ctx?.room, ctx?.floor, ctx?.block?.code, ctx?.existing?.id, assetCode, quantity, manualTags, notPresent])
 
-  const previews = useMemo(() => photos.map((p) => ({ id: p.id, url: URL.createObjectURL(p.blob) })), [photos])
+  const previews = useMemo(() => photos.map((p) => ({
+    id: p.id,
+    url: URL.createObjectURL(p.blob),
+    itemIndexes: p.itemIndexes,
+    representative: p.representative,
+  })), [photos])
   useEffect(() => () => previews.forEach((p) => URL.revokeObjectURL(p.url)), [previews])
 
   if (ctx === undefined) return <p className="text-sm text-slate-500">{t('common.loading')}</p>
@@ -312,13 +355,23 @@ export default function EntryPage() {
   function setQty(next: number) {
     const q = Math.max(0, Math.min(9999, Math.round(next)))
     setQuantity(q === 0 ? 1 : q)
-    if (perItemSerials) {
-      setSerials((prev) => {
-        const copy = prev.slice(0, q)
-        while (copy.length < q) copy.push('')
-        return copy
-      })
-    }
+  }
+
+  function photoAssignment(): { itemIndexes: number[]; representative: boolean } {
+    if (photoMode === 'item') return { itemIndexes: [sourceUnit], representative: false }
+    const selected = [...selectedUnits].filter((index) => index < quantity)
+    return { itemIndexes: selected.length > 0 ? selected : [sourceUnit], representative: true }
+  }
+
+  function applyUnitDetails(includeModel: boolean) {
+    const source = unitDetails[sourceUnit]
+    if (!source) return
+    const targets = selectedUnits.size > 0 ? selectedUnits : new Set(unitDetails.map((_, index) => index))
+    setUnitDetails((current) => current.map((detail, index) =>
+      targets.has(index)
+        ? { ...detail, brand: source.brand, model: includeModel ? source.model : detail.model }
+        : detail,
+    ))
   }
 
   async function onPickPhotos(files: FileList | null) {
@@ -328,7 +381,7 @@ export default function EntryPage() {
       const added: DraftPhoto[] = []
       for (const file of Array.from(files)) {
         const { blob, width, height } = await compressImage(file)
-        added.push({ id: uid('ph_'), blob, width, height, persisted: false })
+        added.push({ id: uid('ph_'), blob, width, height, persisted: false, ...photoAssignment() })
       }
       setPhotos((prev) => [...prev, ...added])
     } catch {
@@ -359,6 +412,7 @@ export default function EntryPage() {
       description,
       specificPosition,
       unlistedName,
+      unitDetails,
     }
   }
 
@@ -376,6 +430,7 @@ export default function EntryPage() {
     setDescription(snap.description)
     setSpecificPosition(snap.specificPosition)
     setUnlistedName(snap.unlistedName)
+    setUnitDetails(snap.unitDetails)
   }
 
   /**
@@ -429,9 +484,18 @@ export default function EntryPage() {
     setCondition(r.condition)
     filled += 1
 
-    fill(r.serialNumber, (v) => setSerials((prev) => [v, ...prev.slice(1)]))
-    fill(r.brand, setBrand)
-    fill(r.model, setModel)
+    fill(r.serialNumber, (v) => {
+      setSerials((prev) => prev.map((value, index) => index === sourceUnit ? v : value))
+      setUnitDetails((prev) => prev.map((detail, index) => index === sourceUnit ? { ...detail, serialNumber: v } : detail))
+    })
+    fill(r.brand, (v) => {
+      if (sourceUnit === 0) setBrand(v)
+      setUnitDetails((prev) => prev.map((detail, index) => index === sourceUnit ? { ...detail, brand: v } : detail))
+    })
+    fill(r.model, (v) => {
+      if (sourceUnit === 0) setModel(v)
+      setUnitDetails((prev) => prev.map((detail, index) => index === sourceUnit ? { ...detail, model: v } : detail))
+    })
     fill(r.itemType, setItemType)
     fill(r.material, setMaterial)
     fill(r.colour, setColour)
@@ -457,7 +521,7 @@ export default function EntryPage() {
     try {
       // Attached first, so the evidence survives a failed or slow call.
       const { blob, width, height } = await compressImage(file)
-      setPhotos((prev) => [...prev, { id: uid('ph_'), blob, width, height, persisted: false }])
+      setPhotos((prev) => [...prev, { id: uid('ph_'), blob, width, height, persisted: false, ...photoAssignment() }])
       await runIdentify(blob)
     } catch {
       flash(t('ai.failed'))
@@ -507,9 +571,14 @@ export default function EntryPage() {
         isUnlistedItem: isUnlisted,
         unlistedItemName: isUnlisted ? unlistedName : undefined,
         quantity,
-        serialNumbers: notPresent ? [] : serials,
-        model: notPresent ? '' : model,
-        brand: notPresent ? '' : brand,
+        serialNumbers: notPresent ? [] : unitDetails.map((detail) => detail.serialNumber),
+        model: notPresent ? '' : (unitDetails[0]?.model ?? model),
+        brand: notPresent ? '' : (unitDetails[0]?.brand ?? brand),
+        itemDetails: notPresent ? [] : unitDetails.map((detail, index) => ({
+          ...detail,
+          photoIds: photos.filter((photo) => !photo.representative && photo.itemIndexes.includes(index)).map((photo) => photo.id),
+          representativePhotoIds: photos.filter((photo) => photo.representative && photo.itemIndexes.includes(index)).map((photo) => photo.id),
+        })),
         condition,
         conditionBreakdown: splitCondition && !notPresent ? breakdown : undefined,
         remarks,
@@ -630,10 +699,39 @@ export default function EntryPage() {
               <span className="field-label mb-0">{t('entry.photo')}</span>
               {editedBadge('photos')}
             </span>
+            <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+              <Field label={t('entry.photoFor')}>
+                <Select value={String(sourceUnit)} onChange={(e) => setSourceUnit(Number(e.target.value))}>
+                  {unitDetails.map((_, index) => (
+                    <option key={index} value={index}>
+                      {tagDraft[index] || t('entry.itemNumber', { n: index + 1 })}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              {quantity > 1 && (
+                <Segmented
+                  value={photoMode}
+                  onChange={setPhotoMode}
+                  options={[
+                    { value: 'item', label: t('entry.itemPhoto') },
+                    { value: 'representative', label: t('entry.representativePhoto') },
+                  ]}
+                />
+              )}
+              {photoMode === 'representative' && quantity > 1 && (
+                <p className="text-xs text-slate-500">{t('entry.selectedCount', { n: selectedUnits.size || 1 })}</p>
+              )}
+            </div>
             <div className="flex flex-wrap gap-2">
               {previews.map((p) => (
                 <div key={p.id} className="relative">
                   <img src={p.url} alt="" className="h-20 w-20 rounded-xl object-cover" />
+                  <span className="absolute left-1 top-1 max-w-[3.8rem] truncate rounded bg-white/90 px-1 py-0.5 text-[9px] font-bold text-slate-700">
+                    {p.representative
+                      ? `${t('entry.photo')} × ${p.itemIndexes.length}`
+                      : (tagDraft[p.itemIndexes[0]] || t('entry.itemNumber', { n: p.itemIndexes[0] + 1 }))}
+                  </span>
                   <button
                     type="button"
                     onClick={() => removePhoto(p.id)}
@@ -1016,7 +1114,7 @@ export default function EntryPage() {
             )}
           </Card>
 
-          <Card className="space-y-3 p-4">
+          {false && (<Card className="hidden">
             <Field
               label={t('entry.serial')}
               hint={t('entry.serialHint')}
@@ -1090,6 +1188,97 @@ export default function EntryPage() {
               <Field label={t('entry.model')} edited={editedFields.has('model') ? t('history.edited') : undefined}>
                 <TextInput value={model} onChange={(e) => setModel(e.target.value)} />
               </Field>
+            </div>
+          </Card>)}
+
+          <Card className="space-y-3 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-bold text-slate-800">{t('entry.perItemDetails')}</p>
+                <p className="text-xs text-slate-500">{t('entry.perItemDetailsHint')}</p>
+              </div>
+              <span className="chip bg-brand-50 text-brand-800">{quantity}</span>
+            </div>
+
+            {quantity > 1 && (
+              <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="text-xs font-bold text-brand-700"
+                    onClick={() => setSelectedUnits(new Set(unitDetails.map((_, index) => index)))}
+                  >
+                    {t('entry.selectAll')}
+                  </button>
+                  <span className="text-slate-300">·</span>
+                  <button type="button" className="text-xs font-bold text-slate-600" onClick={() => setSelectedUnits(new Set())}>
+                    {t('entry.clearSelection')}
+                  </button>
+                  <span className="ml-auto text-xs text-slate-500">
+                    {t('entry.selectedCount', { n: selectedUnits.size })}
+                  </span>
+                </div>
+                <Select value={String(sourceUnit)} onChange={(e) => setSourceUnit(Number(e.target.value))}>
+                  {unitDetails.map((_, index) => (
+                    <option key={index} value={index}>{t('entry.copyFromItem', { n: index + 1 })}</option>
+                  ))}
+                </Select>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button type="button" variant="secondary" className="px-2 text-xs" onClick={() => applyUnitDetails(false)}>
+                    {t('entry.applyBrand')}
+                  </Button>
+                  <Button type="button" variant="secondary" className="px-2 text-xs" onClick={() => applyUnitDetails(true)}>
+                    {t('entry.applyBrandModel')}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <div className="max-h-[34rem] space-y-3 overflow-y-auto pr-1">
+              {unitDetails.map((detail, index) => {
+                const itemPhotos = photos.filter((photo) => photo.itemIndexes.includes(index))
+                return (
+                  <div key={index} className={`rounded-xl border p-3 ${sourceUnit === index ? 'border-brand-300 bg-brand-50/30' : 'border-slate-200'}`}>
+                    <div className="mb-2 flex items-center gap-2">
+                      {quantity > 1 && (
+                        <input
+                          type="checkbox"
+                          checked={selectedUnits.has(index)}
+                          onChange={(e) => setSelectedUnits((current) => {
+                            const next = new Set(current)
+                            if (e.target.checked) next.add(index)
+                            else next.delete(index)
+                            return next
+                          })}
+                          className="h-5 w-5 rounded border-slate-300"
+                        />
+                      )}
+                      <button type="button" onClick={() => setSourceUnit(index)} className="min-w-0 flex-1 text-left">
+                        <span className="font-mono text-xs font-bold text-slate-800">
+                          {tagDraft[index] || t('entry.itemNumber', { n: index + 1 })}
+                        </span>
+                      </button>
+                      {itemPhotos.length > 0 && <span className="text-xs font-semibold text-brand-700">📷 {itemPhotos.length}</span>}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Field label={t('entry.brand')}>
+                        <TextInput value={detail.brand} onFocus={() => setSourceUnit(index)} onChange={(e) => setUnitDetails((current) => current.map((item, i) => i === index ? { ...item, brand: e.target.value } : item))} />
+                      </Field>
+                      <Field label={t('entry.model')}>
+                        <TextInput value={detail.model} onFocus={() => setSourceUnit(index)} onChange={(e) => setUnitDetails((current) => current.map((item, i) => i === index ? { ...item, model: e.target.value } : item))} />
+                      </Field>
+                    </div>
+                    <div className="mt-2">
+                      <Field label={t('entry.serial')}>
+                        <div className="flex gap-2">
+                          <TextInput value={detail.serialNumber} onFocus={() => setSourceUnit(index)} onChange={(e) => setUnitDetails((current) => current.map((item, i) => i === index ? { ...item, serialNumber: e.target.value } : item))} placeholder="SN-…" />
+                          <Button type="button" variant="secondary" className="shrink-0 px-3" onClick={() => setUnitDetails((current) => current.map((item, i) => i === index ? { ...item, serialNumber: 'N/A' } : item))}>{t('entry.na')}</Button>
+                        </div>
+                      </Field>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </Card>
 

@@ -153,6 +153,8 @@ export interface InspectionEntry {
   /** Set when the quantity splits across conditions, e.g. { G: 28, P: 2 }. */
   conditionBreakdown?: ConditionBreakdown
   photoIds: string[]
+  /** Per-tag identity. Older entries fall back to the scalar fields above. */
+  itemDetails?: ItemDetail[]
   remarks: string
 
   /** One accounting record per tag number; older entries legitimately omit it. */
@@ -198,6 +200,17 @@ export interface InspectionEntry {
   syncStatus: SyncStatus
   /** Server copy kept aside when a conflict is detected. */
   conflictWith?: Omit<InspectionEntry, 'conflictWith'>
+}
+
+export interface ItemDetail {
+  tagNumber: string
+  brand: string
+  model: string
+  serialNumber: string
+  /** Photos of this exact tagged item or its serial plate. */
+  photoIds: string[]
+  /** Shared make/model photos, explicitly labelled as representative. */
+  representativePhotoIds: string[]
 }
 
 export interface RoomSignoff {

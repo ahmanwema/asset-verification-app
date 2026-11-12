@@ -64,7 +64,7 @@ export default function LabelsPage() {
       if (photoFilter === 'with' && label.photoCount === 0) return false
       if (photoFilter === 'without' && label.photoCount > 0) return false
       if (!q) return true
-      return [label.tag, label.description, label.block, label.floor, label.room, label.serial].some((value) =>
+      return [label.tag, label.description, label.block, label.floor, label.room, label.serial, label.brand, label.model].some((value) =>
         value.toLowerCase().includes(q),
       )
     })
@@ -296,8 +296,10 @@ function LabelPhotoSheet({ label, onClose }: { label: LabelData | null; onClose:
   )
 
   const urls = useMemo(
-    () => (photos ?? []).map((photo) => ({ id: photo.id, url: URL.createObjectURL(photoBlob(photo)) })),
-    [photos],
+    () => (photos ?? [])
+      .filter((photo) => !label || label.photoIds.includes(photo.id))
+      .map((photo) => ({ id: photo.id, url: URL.createObjectURL(photoBlob(photo)) })),
+    [photos, label],
   )
   useEffect(() => () => urls.forEach((item) => URL.revokeObjectURL(item.url)), [urls])
 

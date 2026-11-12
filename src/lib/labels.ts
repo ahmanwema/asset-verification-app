@@ -1,4 +1,5 @@
 import { db } from '../db/db'
+import { itemDetailFor } from './entries'
 import type { Condition } from '../types'
 
 export type LabelScope = 'room' | 'floor' | 'exercise'
@@ -10,7 +11,10 @@ export interface LabelData {
   floor: string
   room: string
   serial: string
+  brand: string
+  model: string
   photoCount: number
+  photoIds: string[]
   /** The entry this tag belongs to, so its photos can be shown before printing. */
   entryId: string
   condition: Condition
@@ -62,14 +66,19 @@ export async function collectLabels(opts: {
       ? (e.unlistedItemName ?? 'Unlisted item')
       : (typeById.get(e.assetTypeId ?? '')?.name ?? 'Asset')
     e.tagNumbers.forEach((tag, i) => {
+      const detail = itemDetailFor(e, tag, i)
+      const photoIds = [...new Set([...detail.photoIds, ...detail.representativePhotoIds])]
       labels.push({
         tag,
         description,
         block: block?.name ?? '',
         floor: floor?.name ?? '',
         room: room?.name ?? '',
-        serial: e.serialNumbers[i] ?? '',
-        photoCount: e.photoIds.length,
+        serial: detail.serialNumber,
+        brand: detail.brand,
+        model: detail.model,
+        photoCount: photoIds.length,
+        photoIds,
         entryId: e.id,
         condition: e.condition,
         blockOrder: block?.sortOrder ?? Number.MAX_SAFE_INTEGER,

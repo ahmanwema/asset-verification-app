@@ -75,6 +75,28 @@ describe('saveEntry', () => {
     expect(entry.serialNumbers).toEqual(['SN-1'])
   })
 
+  it('stores brand, model, serial and photos against each individual tag', async () => {
+    const entry = await saveEntry(draft({
+      quantity: 3,
+      photoIds: ['photo-hp', 'photo-dell', 'photo-shared'],
+      itemDetails: [
+        { brand: 'HP', model: 'E24', serialNumber: 'HP-001', photoIds: ['photo-hp'], representativePhotoIds: ['photo-shared'] },
+        { brand: 'Dell', model: 'P2422H', serialNumber: 'DELL-002', photoIds: ['photo-dell'], representativePhotoIds: [] },
+        { brand: 'Lenovo', model: 'T24i', serialNumber: 'LEN-003', photoIds: [], representativePhotoIds: ['photo-shared'] },
+      ],
+    }))
+
+    expect(entry.itemDetails?.map(({ tagNumber, brand, model, serialNumber }) => ({ tagNumber, brand, model, serialNumber }))).toEqual([
+      { tagNumber: entry.tagNumbers[0], brand: 'HP', model: 'E24', serialNumber: 'HP-001' },
+      { tagNumber: entry.tagNumbers[1], brand: 'Dell', model: 'P2422H', serialNumber: 'DELL-002' },
+      { tagNumber: entry.tagNumbers[2], brand: 'Lenovo', model: 'T24i', serialNumber: 'LEN-003' },
+    ])
+    expect(entry.itemDetails?.[0].representativePhotoIds).toEqual(['photo-shared'])
+    expect(entry.itemDetails?.[2].representativePhotoIds).toEqual(['photo-shared'])
+    expect(entry.serialNumbers).toEqual(['HP-001', 'DELL-002', 'LEN-003'])
+    expect(entry.brand).toBe('HP')
+  })
+
   it('marks every write pending for sync', async () => {
     const entry = await saveEntry(draft())
     expect(entry.syncStatus).toBe('pending')

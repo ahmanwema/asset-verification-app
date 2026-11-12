@@ -89,6 +89,42 @@ describe('fixed assets register', () => {
     expect(chairRows[0]['Serial Number']).toBe('SN-A')
     expect(chairRows[5]['Serial Number']).toBe('SN-A')
   })
+
+  it('exports the matching brand, model and serial for every tag', async () => {
+    await saveEntry({
+      exerciseId: fx.exercise.id,
+      room: fx.room,
+      floor: fx.floor,
+      assetType: fx.chair,
+      isUnlistedItem: false,
+      quantity: 3,
+      serialNumbers: [],
+      model: '',
+      brand: '',
+      itemDetails: [
+        { brand: 'HP', model: 'E24', serialNumber: 'HP-1', photoIds: ['hp-photo'], representativePhotoIds: [] },
+        { brand: 'Dell', model: 'P24', serialNumber: 'DELL-2', photoIds: [], representativePhotoIds: [] },
+        { brand: 'Lenovo', model: 'T24', serialNumber: 'LEN-3', photoIds: [], representativePhotoIds: [] },
+      ],
+      photoIds: ['hp-photo'],
+      condition: 'G',
+      remarks: '',
+      inspectorId: fx.inspector.id,
+      notPresent: false,
+    })
+
+    const { register, tags } = await buildReportBundle(fx.exercise.id)
+    expect(register.map((row) => [row.Brand, row.Model, row['Serial Number'], row.Photos])).toEqual([
+      ['HP', 'E24', 'HP-1', 1],
+      ['Dell', 'P24', 'DELL-2', 0],
+      ['Lenovo', 'T24', 'LEN-3', 0],
+    ])
+    expect(tags.map((row) => [row.Brand, row.Model, row['Serial Number']])).toEqual([
+      ['HP', 'E24', 'HP-1'],
+      ['Dell', 'P24', 'DELL-2'],
+      ['Lenovo', 'T24', 'LEN-3'],
+    ])
+  })
 })
 
 describe('detail columns', () => {

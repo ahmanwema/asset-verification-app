@@ -165,7 +165,7 @@ describe('inspection walkthrough', () => {
     fireEvent.change(qty, { target: { value: '' } })
     expect((qty as HTMLInputElement).value).toBe('')
     fireEvent.change(qty, { target: { value: '3' } })
-    expect(await screen.findByText('SC-MAIN-1F-P3-003')).toBeTruthy()
+    expect((await screen.findAllByText('SC-MAIN-1F-P3-003')).length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
 

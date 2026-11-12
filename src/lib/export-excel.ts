@@ -1,6 +1,6 @@
 import type * as XLSXTypes from 'xlsx'
 import { db } from '../db/db'
-import { EDIT_FIELD_LABEL } from './entries'
+import { EDIT_FIELD_LABEL, itemDetailFor } from './entries'
 import { entryConditionCounts } from './queries'
 import type { Condition, InspectionEntry } from '../types'
 import { CONDITIONS } from '../types'
@@ -116,6 +116,9 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
   const nameOf = (e: InspectionEntry) =>
     e.isUnlistedItem ? (e.unlistedItemName ?? 'Unlisted item') : (typeById.get(e.assetTypeId ?? '')?.name ?? 'Unknown')
 
+  const detailSummary = (e: InspectionEntry, field: 'brand' | 'model' | 'serialNumber') =>
+    [...new Set(e.tagNumbers.map((tag, index) => itemDetailFor(e, tag, index)[field]).filter(Boolean))].join(', ')
+
   // --- Fixed assets register: one row per tagged item ---------------------
   const register: Array<Record<string, string | number>> = []
   for (const e of sorted) {
@@ -129,6 +132,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
     const tags = e.tagNumbers.length > 0 ? e.tagNumbers : Array.from({ length: e.quantity }, () => '')
 
     tags.forEach((tag, i) => {
+      const detail = itemDetailFor(e, tag, i)
       const finance = financialRecordFor(e, tag)
       const depreciation = calculateDepreciation(finance, exercise?.date ?? '')
       register.push({
@@ -139,9 +143,9 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         Block: loc.blockName,
         Floor: loc.floorName,
         Room: loc.roomName,
-        'Serial Number': e.serialNumbers[i] ?? e.serialNumbers[0] ?? 'N/A',
-        Brand: e.brand,
-        Model: e.model,
+        'Serial Number': detail.serialNumber || 'N/A',
+        Brand: detail.brand,
+        Model: detail.model,
         Condition: CONDITION_LABEL[perItem[i] ?? e.condition],
         'Acquisition Date': finance?.acquisitionDate ?? '',
         'Available for Use': finance?.availableForUseDate ?? '',
@@ -159,7 +163,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         'Additional Features': e.additionalFeatures ?? '',
         'Position in Room': e.specificPosition ?? '',
         'Qty in Entry': e.quantity,
-        Photos: e.photoIds.length,
+        Photos: new Set([...detail.photoIds, ...detail.representativePhotoIds]).size,
         'AI Assisted': e.aiAssisted ? 'Yes' : '',
         Inspector: whoById.get(e.inspectorId)?.name ?? '',
         'Inspected At': fmtDate(e.inspectedAt),
@@ -174,6 +178,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
     if (e.notPresent || e.quantity === 0) continue
     const loc = locationOf(e.roomId)
     e.tagNumbers.forEach((tag, index) => {
+      const detail = itemDetailFor(e, tag, index)
       const finance = financialRecordFor(e, tag)
       const result = calculateDepreciation(finance, exercise?.date ?? '')
       depreciation.push({
@@ -183,7 +188,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         Block: loc.blockName,
         Floor: loc.floorName,
         Room: loc.roomName,
-        'Serial Number': e.serialNumbers[index] ?? e.serialNumbers[0] ?? '',
+        'Serial Number': detail.serialNumber,
         'Acquisition Date': finance?.acquisitionDate ?? '',
         'Available for Use': finance?.availableForUseDate ?? '',
         'Original Cost': finance?.originalCost ?? '',
@@ -229,9 +234,9 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         Quantity: e.notPresent ? 0 : e.quantity,
         Condition: e.notPresent ? 'Not present' : conditionSummary(e),
         'Tag Numbers': e.tagNumbers.join(', '),
-        'Serial Numbers': e.serialNumbers.join(', '),
-        Brand: e.brand,
-        Model: e.model,
+        'Serial Numbers': detailSummary(e, 'serialNumber'),
+        Brand: detailSummary(e, 'brand'),
+        Model: detailSummary(e, 'model'),
         'Item Type': e.itemType ?? '',
         Material: e.material ?? '',
         Colour: e.colour ?? '',
@@ -283,9 +288,9 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         Floor: loc.floorName,
         Room: loc.roomName,
         'Tag Numbers': e.tagNumbers.join(', '),
-        'Serial Numbers': e.serialNumbers.join(', '),
-        Brand: e.brand,
-        Model: e.model,
+        'Serial Numbers': detailSummary(e, 'serialNumber'),
+        Brand: detailSummary(e, 'brand'),
+        Model: detailSummary(e, 'model'),
         'Position in Room': e.specificPosition ?? '',
         'Item Type': e.itemType ?? '',
         Material: e.material ?? '',
@@ -376,13 +381,16 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
   for (const e of sorted) {
     const loc = locationOf(e.roomId)
     e.tagNumbers.forEach((tag, i) => {
+      const detail = itemDetailFor(e, tag, i)
       tags.push({
         'Tag Number': tag,
         'Asset Description': nameOf(e),
         Block: loc.blockName,
         Floor: loc.floorName,
         Room: loc.roomName,
-        'Serial Number': e.serialNumbers[i] ?? '',
+        'Serial Number': detail.serialNumber,
+        Brand: detail.brand,
+        Model: detail.model,
         Condition: CONDITION_LABEL[e.condition],
         'Issued At': fmtDate(e.inspectedAt),
         Printed: '',

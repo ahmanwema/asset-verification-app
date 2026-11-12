@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
 import { photoBlob } from '../lib/photos'
 import { entryConditionCounts } from '../lib/queries'
-import { EDIT_FIELD_LABEL } from '../lib/entries'
+import { EDIT_FIELD_LABEL, itemDetailFor } from '../lib/entries'
 import { ensureEntryPhotos, resyncEverything } from '../lib/sync'
 import { calculateDepreciation, financialRecordFor } from '../lib/depreciation'
 import { useOnline, useSession } from '../state/session'
@@ -60,10 +60,17 @@ export default function AssetPage() {
     async () => (data?.entry ? db.photos.where('entryId').equals(data.entry.id).toArray() : []),
     [data?.entry.id],
   )
-  const photoUrls = useMemo(
-    () => (photos ?? []).map((photo) => ({ id: photo.id, url: URL.createObjectURL(photoBlob(photo)) })),
-    [photos],
-  )
+  const photoUrls = useMemo(() => {
+    const entry = data?.entry
+    let visiblePhotos = photos ?? []
+    if (entry?.itemDetails && entry.itemDetails.length > 0) {
+      const tag = entry.tagNumbers.includes(requestedTag) ? requestedTag : entry.tagNumbers[0]
+      const detail = tag ? itemDetailFor(entry, tag, entry.tagNumbers.indexOf(tag)) : undefined
+      const allowed = new Set([...(detail?.photoIds ?? []), ...(detail?.representativePhotoIds ?? [])])
+      visiblePhotos = visiblePhotos.filter((photo) => allowed.has(photo.id))
+    }
+    return visiblePhotos.map((photo) => ({ id: photo.id, url: URL.createObjectURL(photoBlob(photo)) }))
+  }, [photos, data?.entry, requestedTag])
   useEffect(() => () => photoUrls.forEach((photo) => URL.revokeObjectURL(photo.url)), [photoUrls])
 
   if (data === undefined || repairing) {
@@ -87,14 +94,15 @@ export default function AssetPage() {
     : (assetType?.name ?? t('asset.unknown'))
   const tag = entry.tagNumbers.includes(requestedTag) ? requestedTag : (entry.tagNumbers[0] ?? requestedTag)
   const tagIndex = entry.tagNumbers.indexOf(tag)
-  const serial = tagIndex >= 0 ? (entry.serialNumbers[tagIndex] ?? '') : ''
+  const itemDetail = itemDetailFor(entry, tag, tagIndex)
+  const serial = itemDetail.serialNumber
   const conditionCounts = entryConditionCounts(entry)
   const financialRecord = financialRecordFor(entry, tag)
   const financial = calculateDepreciation(financialRecord, entryExercise?.date ?? new Date().toISOString().slice(0, 10))
   const details = [
     [t('entry.serial'), serial],
-    [t('entry.brand'), entry.brand],
-    [t('entry.model'), entry.model],
+    [t('entry.brand'), itemDetail.brand],
+    [t('entry.model'), itemDetail.model],
     [t('entry.specificPosition'), entry.specificPosition],
     [t('entry.description'), entry.description],
     [t('entry.remarks'), entry.remarks],
