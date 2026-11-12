@@ -64,6 +64,10 @@ describe('blocks', () => {
       return row!
     })
 
+    fireEvent.change(screen.getByPlaceholderText('Block name'), { target: { value: 'Block B' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add block' }))
+    await waitFor(async () => expect(await db.blocks.filter((candidate) => candidate.name === 'Block B').first()).toBeTruthy())
+
     const floorHeading = await screen.findByText('1st Floor')
     fireEvent.click(floorHeading)
     const floorCard = floorHeading.closest('div.card') as HTMLElement
@@ -82,6 +86,7 @@ describe('blocks', () => {
     fireEvent.click(screen.getByText('Inspect'))
     expect(await screen.findByText('Pick a block')).toBeTruthy()
     expect(screen.queryByText('1st Floor')).toBeNull()
+    expect(await screen.findByText('Block B')).toBeTruthy()
 
     const adminLink = (await screen.findByText('Administration Block')).closest('a') as HTMLAnchorElement
     const mainLink = screen.getByText('Main Block').closest('a') as HTMLAnchorElement

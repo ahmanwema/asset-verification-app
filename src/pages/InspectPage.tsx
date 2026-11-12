@@ -57,8 +57,15 @@ export default function InspectPage() {
       })
       .filter((fp) => fp.rooms.length > 0)
 
-  const groups = (data?.blocks.map((block) => ({ id: block.id, code: block.code, name: block.name, floors: floorsForBlock(block.id) })) ?? [])
-    .filter((group) => group.floors.length > 0)
+  // Keep every configured block visible, including a newly created block that
+  // has not received any rooms yet. Setup is the source of truth for the block
+  // list; inspection progress only supplies its counts.
+  const groups = data?.blocks.map((block) => ({
+    id: block.id,
+    code: block.code,
+    name: block.name,
+    floors: floorsForBlock(block.id),
+  })) ?? []
   const unassignedFloors = floorsForBlock('')
   if (unassignedFloors.length > 0) groups.push({ id: '', code: '—', name: t('setup.unassignedBlock'), floors: unassignedFloors })
 
@@ -147,6 +154,17 @@ export default function InspectPage() {
               )
             })}
           </div>
+          {selectedGroup.floors.length === 0 && (
+            <EmptyState
+              title={t('common.empty')}
+              hint={t('room.blockEmpty')}
+              action={
+                <Link to="/setup" className="btn-secondary mt-2">
+                  {t('nav.setup')}
+                </Link>
+              }
+            />
+          )}
         </div>
       )}
 
