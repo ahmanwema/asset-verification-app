@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
 import { loadFloorProgress } from '../lib/queries'
@@ -9,12 +9,25 @@ import { EmptyState, ProgressBar, SectionTitle } from '../components/ui'
 export default function InspectPage() {
   const t = useT()
   const { exercise } = useSession()
+  const [searchParams] = useSearchParams()
 
   const data = useLiveQuery(async () => {
     if (!exercise) return { floors: [], blocks: [] }
     const [floors, blocks] = await Promise.all([
       loadFloorProgress(exercise.id),
-      db.blocks.where('exerciseId').equals(exercise.id).sortBy('sortOrder').then((rows) => rows.filter((block) => !block.deleted)),
+      db.blocks.where('exerciseId').equals(exercise.id).toArray().then((rows) =>
+        rows
+          .filter((block) => !block.deleted)
+          .sort((a, b) => {
+            const rank = (name: string) => {
+              const normalized = name.trim().toLocaleLowerCase()
+              if (normalized.includes('admin')) return 0
+              if (/^block\s/.test(normalized)) return 1
+              return 2
+            }
+            return rank(a.name) - rank(b.name) || a.name.localeCompare(b.name, undefined, { numeric: true })
+          }),
+      ),
     ])
     return { floors, blocks }
   }, [exercise?.id])
@@ -44,10 +57,15 @@ export default function InspectPage() {
       })
       .filter((fp) => fp.rooms.length > 0)
 
-  const groups = (data?.blocks.map((block) => ({ id: block.id, name: block.name, floors: floorsForBlock(block.id) })) ?? [])
+  const groups = (data?.blocks.map((block) => ({ id: block.id, code: block.code, name: block.name, floors: floorsForBlock(block.id) })) ?? [])
     .filter((group) => group.floors.length > 0)
   const unassignedFloors = floorsForBlock('')
-  if (unassignedFloors.length > 0) groups.push({ id: '', name: t('setup.unassignedBlock'), floors: unassignedFloors })
+  if (unassignedFloors.length > 0) groups.push({ id: '', code: '—', name: t('setup.unassignedBlock'), floors: unassignedFloors })
+
+  const requestedBlock = searchParams.get('block')
+  const selectedGroup = requestedBlock
+    ? groups.find((group) => (group.id || 'unassigned') === requestedBlock)
+    : groups.length === 1 ? groups[0] : undefined
 
   return (
     <div className="space-y-4">
@@ -57,17 +75,57 @@ export default function InspectPage() {
         </p>
       )}
 
-      <SectionTitle>{t('room.pickFloor')}</SectionTitle>
+      <SectionTitle>
+        {selectedGroup
+          ? groups.length === 1 ? t('room.pickFloor') : selectedGroup.name
+          : t('room.pickBlock')}
+      </SectionTitle>
 
       {data === undefined && <p className="text-sm text-slate-500">{t('common.loading')}</p>}
 
-      <div className="space-y-4">
-        {groups.map((group) => (
-          <section key={group.id || 'unassigned'} className="space-y-2">
-            <SectionTitle>{group.name}</SectionTitle>
-            {group.floors.map((fp) => {
+      {!selectedGroup ? (
+        <div className="space-y-2">
+          {groups.map((group) => {
+            const floorCount = group.floors.length
+            const rooms = group.floors.flatMap((floor) => floor.rooms)
+            const done = rooms.filter((room) => room.status === 'done').length
+            const itemsFound = rooms.reduce((total, room) => total + room.itemsFound, 0)
+            return (
+              <Link
+                key={group.id || 'unassigned'}
+                to={`/inspect?block=${encodeURIComponent(group.id || 'unassigned')}`}
+                className="card block px-4 py-4 active:bg-slate-50"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-xs font-bold text-brand-800">
+                    {group.code}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-bold text-slate-900">{group.name}</p>
+                    <p className="text-xs text-slate-500">
+                      {floorCount} {t('setup.floorCount')} · {done}/{rooms.length} {t('common.rooms')} · {itemsFound} {t('common.items')}
+                    </p>
+                  </div>
+                  <svg viewBox="0 0 24 24" className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+                <div className="mt-3"><ProgressBar value={done} total={rooms.length} /></div>
+              </Link>
+            )
+          })}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {groups.length > 1 && (
+            <Link to="/inspect" className="btn-secondary inline-flex items-center gap-1 px-3 py-2 text-sm">
+              <span aria-hidden="true">‹</span> {t('room.allBlocks')}
+            </Link>
+          )}
+          <div className="space-y-2">
+            {selectedGroup.floors.map((fp) => {
               const total = fp.rooms.length
-              const blockQuery = group.id ? `?block=${encodeURIComponent(group.id)}` : '?block=unassigned'
+              const blockQuery = selectedGroup.id ? `?block=${encodeURIComponent(selectedGroup.id)}` : '?block=unassigned'
               return (
                 <Link key={fp.floor.id} to={`/inspect/${fp.floor.id}${blockQuery}`} className="card block px-4 py-3 active:bg-slate-50">
                   <div className="flex items-center gap-3">
@@ -87,10 +145,10 @@ export default function InspectPage() {
                   <div className="mt-2"><ProgressBar value={fp.done} total={total} /></div>
                 </Link>
               )
-              })}
-          </section>
-        ))}
-      </div>
+            })}
+          </div>
+        </div>
+      )}
 
       {data?.floors.length === 0 && (
         <EmptyState

@@ -78,6 +78,17 @@ describe('blocks', () => {
       expect((await db.rooms.get(firstRoom.id))?.blockId).toBe(block.id)
       expect(await db.rooms.where('floorId').equals(floor!.id).count()).toBe(originalRoomCount)
     })
+
+    fireEvent.click(screen.getByText('Inspect'))
+    expect(await screen.findByText('Pick a block')).toBeTruthy()
+    expect(screen.queryByText('1st Floor')).toBeNull()
+
+    const adminLink = (await screen.findByText('Administration Block')).closest('a') as HTMLAnchorElement
+    const mainLink = screen.getByText('Main Block').closest('a') as HTMLAnchorElement
+    expect(adminLink.compareDocumentPosition(mainLink) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    fireEvent.click(adminLink)
+    expect(await screen.findByText('1st Floor')).toBeTruthy()
   })
 })
 
