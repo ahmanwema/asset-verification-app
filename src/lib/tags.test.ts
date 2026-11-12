@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { resetDb, seedFixture, type Fixture } from '../test/fixtures'
 import { allocateTagNumbers, deriveCode, deriveRoomCode, formatTag, parseTag } from './tags'
 import { saveEntry } from './entries'
+import { db, uid } from '../db/db'
 
 let fx: Fixture
 
@@ -46,6 +47,39 @@ describe('tag format', () => {
 })
 
 describe('tag allocation', () => {
+  it('uses a room block override in tags when one floor spans multiple blocks', async () => {
+    const blockId = uid('bl_')
+    await db.blocks.add({
+      id: blockId,
+      exerciseId: fx.exercise.id,
+      name: 'Administration Block',
+      code: 'ADM',
+      sortOrder: 0,
+      updatedAt: Date.now(),
+      syncStatus: 'pending',
+    })
+    const room = { ...fx.room, blockId }
+    await db.rooms.put(room)
+
+    const entry = await saveEntry({
+      exerciseId: fx.exercise.id,
+      room,
+      floor: fx.floor,
+      assetType: fx.chair,
+      isUnlistedItem: false,
+      quantity: 1,
+      serialNumbers: [],
+      model: '',
+      brand: '',
+      condition: 'G',
+      remarks: '',
+      inspectorId: fx.inspector.id,
+      notPresent: false,
+    })
+
+    expect(entry.tagNumbers).toEqual(['SC-ADM-1F-P3-001'])
+  })
+
   it('numbers a batch sequentially from 001', async () => {
     const tags = await allocateTagNumbers({
       roomId: fx.room.id,

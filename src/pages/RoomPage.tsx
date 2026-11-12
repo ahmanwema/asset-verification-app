@@ -76,6 +76,8 @@ export default function RoomPage() {
       .toLocaleLowerCase()
       .includes(assetNeedle)
   })
+  const effectiveBlockId = room.blockId ?? floor?.blockId
+  const floorRoute = `/inspect/${room.floorId}?block=${encodeURIComponent(effectiveBlockId || 'unassigned')}`
 
   async function quickNotPresent(assetTypeId: string) {
     if (!exercise || !inspector || !floor) return
@@ -98,7 +100,7 @@ export default function RoomPage() {
       setSignSheet(false)
       setSignNotes('')
       flash(t('common.done'))
-      navigate(`/inspect/${room.floorId}`)
+      navigate(floorRoute)
     } finally {
       setBusy(false)
     }
@@ -118,7 +120,7 @@ export default function RoomPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <Link to={`/inspect/${room.floorId}`} className="btn-ghost px-2" aria-label={t('common.back')}>
+        <Link to={floorRoute} className="btn-ghost px-2" aria-label={t('common.back')}>
           <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>

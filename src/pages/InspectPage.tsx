@@ -27,6 +27,28 @@ export default function InspectPage() {
     return <EmptyState title={t('common.empty')} hint={t('exercise.select')} />
   }
 
+  const blockIds = new Set(data?.blocks.map((block) => block.id) ?? [])
+  const floorsForBlock = (blockId: string) =>
+    (data?.floors ?? [])
+      .map((fp) => {
+        const rooms = fp.rooms.filter((rp) => {
+          const effectiveBlockId = rp.room.blockId ?? fp.floor.blockId ?? ''
+          return blockId ? effectiveBlockId === blockId : !effectiveBlockId || !blockIds.has(effectiveBlockId)
+        })
+        return {
+          ...fp,
+          rooms,
+          done: rooms.filter((room) => room.status === 'done').length,
+          itemsFound: rooms.reduce((total, room) => total + room.itemsFound, 0),
+        }
+      })
+      .filter((fp) => fp.rooms.length > 0)
+
+  const groups = (data?.blocks.map((block) => ({ id: block.id, name: block.name, floors: floorsForBlock(block.id) })) ?? [])
+    .filter((group) => group.floors.length > 0)
+  const unassignedFloors = floorsForBlock('')
+  if (unassignedFloors.length > 0) groups.push({ id: '', name: t('setup.unassignedBlock'), floors: unassignedFloors })
+
   return (
     <div className="space-y-4">
       {(exercises?.length ?? 0) > 1 && (
@@ -40,39 +62,31 @@ export default function InspectPage() {
       {data === undefined && <p className="text-sm text-slate-500">{t('common.loading')}</p>}
 
       <div className="space-y-4">
-        {[
-          ...(data?.blocks.map((block) => ({ id: block.id, name: block.name })) ?? []),
-          ...(data?.floors.some((fp) => !fp.floor.blockId || !data.blocks.some((b) => b.id === fp.floor.blockId))
-            ? [{ id: '', name: t('setup.unassignedBlock') }]
-            : []),
-        ].map((group) => (
+        {groups.map((group) => (
           <section key={group.id || 'unassigned'} className="space-y-2">
             <SectionTitle>{group.name}</SectionTitle>
-            {data?.floors
-              .filter((fp) => group.id ? fp.floor.blockId === group.id : !fp.floor.blockId || !data.blocks.some((b) => b.id === fp.floor.blockId))
-              .map((fp) => {
-          const total = fp.rooms.length
-          return (
-            <Link key={fp.floor.id} to={`/inspect/${fp.floor.id}`} className="card block px-4 py-3 active:bg-slate-50">
-              <div className="flex items-center gap-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-sm font-bold text-brand-800">
-                  {fp.floor.code}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold text-slate-900">{fp.floor.name}</p>
-                  <p className="text-xs text-slate-500">
-                    {fp.done}/{total} {t('common.rooms')} · {fp.itemsFound} {t('common.items')}
-                  </p>
-                </div>
-                <svg viewBox="0 0 24 24" className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
-              <div className="mt-2">
-                <ProgressBar value={fp.done} total={total} />
-              </div>
-            </Link>
-          )
+            {group.floors.map((fp) => {
+              const total = fp.rooms.length
+              const blockQuery = group.id ? `?block=${encodeURIComponent(group.id)}` : '?block=unassigned'
+              return (
+                <Link key={fp.floor.id} to={`/inspect/${fp.floor.id}${blockQuery}`} className="card block px-4 py-3 active:bg-slate-50">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-sm font-bold text-brand-800">
+                      {fp.floor.code}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold text-slate-900">{fp.floor.name}</p>
+                      <p className="text-xs text-slate-500">
+                        {fp.done}/{total} {t('common.rooms')} · {fp.itemsFound} {t('common.items')}
+                      </p>
+                    </div>
+                    <svg viewBox="0 0 24 24" className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                  <div className="mt-2"><ProgressBar value={fp.done} total={total} /></div>
+                </Link>
+              )
               })}
           </section>
         ))}

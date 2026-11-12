@@ -317,10 +317,12 @@ function FloorsTab({
     const name = newRoom.trim()
     if (!name) return
     const siblings = rooms.filter((r) => r.floorId === floorId)
+    const floor = floors.find((candidate) => candidate.id === floorId)
     await db.rooms.add({
       id: uid('rm_'),
       floorId,
       exerciseId: exId,
+      blockId: floor?.blockId,
       name,
       code: deriveRoomCode(name),
       sortOrder: siblings.length,
@@ -349,7 +351,7 @@ function FloorsTab({
   }
 
   async function removeBlock(block: Block) {
-    if (floors.some((floor) => floor.blockId === block.id)) {
+    if (floors.some((floor) => floor.blockId === block.id) || rooms.some((room) => room.blockId === block.id)) {
       flash(t('setup.blockDeleteBlocked'))
       return
     }
@@ -385,7 +387,7 @@ function FloorsTab({
 
         {open && (
           <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
-            <Field label={t('setup.block')} hint={t('setup.moveFloorHint')}>
+            <Field label={t('setup.block')} hint={t('setup.floorBlockHint')}>
               <Select
                 value={floor.blockId ?? ''}
                 disabled={!canEdit}
@@ -418,31 +420,51 @@ function FloorsTab({
               </Field>
             </div>
 
-            <ul className="space-y-1.5">
+            <ul className="space-y-2">
               {floorRooms.map((room) => (
-                <li key={room.id} className="flex items-center gap-2">
-                  <TextInput
-                    defaultValue={room.name}
-                    disabled={!canEdit}
-                    onBlur={(e) => void patchRoom(room.id, { name: e.target.value })}
-                    className="py-2"
-                  />
-                  <TextInput
-                    defaultValue={room.code}
-                    disabled={!canEdit}
-                    onBlur={(e) => void patchRoom(room.id, { code: e.target.value.toUpperCase() })}
-                    className="w-20 py-2 text-center font-mono"
-                  />
-                  {canEdit && (
-                    <button
-                      type="button"
-                      onClick={() => void removeRoom(room)}
-                      className="shrink-0 rounded-lg px-2 py-2 text-lg text-slate-400 hover:bg-red-50 hover:text-red-600"
-                      aria-label={t('common.delete')}
+                <li key={room.id} className="space-y-1.5 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                  <div className="flex items-center gap-2">
+                    <TextInput
+                      defaultValue={room.name}
+                      disabled={!canEdit}
+                      onBlur={(e) => void patchRoom(room.id, { name: e.target.value })}
+                      className="py-2"
+                    />
+                    <TextInput
+                      defaultValue={room.code}
+                      disabled={!canEdit}
+                      onBlur={(e) => void patchRoom(room.id, { code: e.target.value.toUpperCase() })}
+                      className="w-20 py-2 text-center font-mono"
+                    />
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => void removeRoom(room)}
+                        className="shrink-0 rounded-lg px-2 py-2 text-lg text-slate-400 hover:bg-red-50 hover:text-red-600"
+                        aria-label={t('common.delete')}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                  <label className="block">
+                    <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                      {t('setup.roomBlock')}
+                    </span>
+                    <Select
+                      value={room.blockId ?? ''}
+                      disabled={!canEdit}
+                      onChange={(e) => void patchRoom(room.id, { blockId: e.target.value || undefined })}
+                      className="py-2 text-sm"
                     >
-                      ×
-                    </button>
-                  )}
+                      <option value="">
+                        {t('setup.inheritFloorBlock')}{floor.blockId ? ` — ${blocks.find((b) => b.id === floor.blockId)?.name ?? ''}` : ''}
+                      </option>
+                      {blocks.map((block) => (
+                        <option key={block.id} value={block.id}>{block.name}</option>
+                      ))}
+                    </Select>
+                  </label>
                 </li>
               ))}
             </ul>
@@ -498,6 +520,10 @@ function FloorsTab({
 
       {blocks.map((block) => {
         const blockFloors = floors.filter((floor) => floor.blockId === block.id)
+        const blockRoomCount = rooms.filter((room) => {
+          const floor = floors.find((candidate) => candidate.id === room.floorId)
+          return (room.blockId ?? floor?.blockId) === block.id
+        }).length
         return (
           <section key={block.id} className="space-y-2">
             <Card className="space-y-2 border-brand-200 bg-brand-50/40 p-3">
@@ -528,7 +554,9 @@ function FloorsTab({
                   <p className="text-xs text-slate-500">{block.code}</p>
                 </div>
               )}
-              <p className="text-xs text-slate-500">{blockFloors.length} {t('setup.floorCount')}</p>
+              <p className="text-xs text-slate-500">
+                {blockFloors.length} {t('setup.floorCount')} · {blockRoomCount} {t('common.rooms')}
+              </p>
             </Card>
             <div className="space-y-2 pl-2">{blockFloors.map(floorCard)}</div>
           </section>

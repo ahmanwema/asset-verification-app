@@ -57,6 +57,8 @@ export interface Room {
   id: string
   floorId: string
   exerciseId: string
+  /** Overrides the floor's default block when one floor contains rooms from multiple blocks. */
+  blockId?: string
   name: string
   code: string // used in tag numbers, e.g. P3
   sortOrder: number

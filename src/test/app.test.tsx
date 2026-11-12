@@ -50,7 +50,7 @@ describe('sample data', () => {
 })
 
 describe('blocks', () => {
-  it('adds a block and moves an existing floor into it without moving its rooms', async () => {
+  it('adds a block and moves one room without moving the rest of its floor', async () => {
     await signIn()
     fireEvent.click(await screen.findByText('Setup'))
     fireEvent.click(await screen.findByRole('button', { name: 'Blocks, floors & rooms' }))
@@ -69,11 +69,13 @@ describe('blocks', () => {
     const floorCard = floorHeading.closest('div.card') as HTMLElement
     const originalFloor = await db.floors.filter((candidate) => candidate.name === '1st Floor').first()
     const originalRoomCount = await db.rooms.where('floorId').equals(originalFloor!.id).count()
-    fireEvent.change(within(floorCard).getByLabelText('Block'), { target: { value: block.id } })
+    const firstRoom = (await db.rooms.where('floorId').equals(originalFloor!.id).sortBy('sortOrder'))[0]
+    fireEvent.change(within(floorCard).getAllByLabelText('Room block')[0], { target: { value: block.id } })
 
     await waitFor(async () => {
       const floor = await db.floors.filter((candidate) => candidate.name === '1st Floor').first()
-      expect(floor?.blockId).toBe(block.id)
+      expect(floor?.blockId).toBe(originalFloor?.blockId)
+      expect((await db.rooms.get(firstRoom.id))?.blockId).toBe(block.id)
       expect(await db.rooms.where('floorId').equals(floor!.id).count()).toBe(originalRoomCount)
     })
   })

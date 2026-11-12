@@ -89,7 +89,8 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
   const locationOf = (roomId: string) => {
     const room = roomById.get(roomId)
     const floor = room ? floorById.get(room.floorId) : undefined
-    const block = floor?.blockId ? blockById.get(floor.blockId) : undefined
+    const effectiveBlockId = room?.blockId ?? floor?.blockId
+    const block = effectiveBlockId ? blockById.get(effectiveBlockId) : undefined
     return {
       blockName: block?.name ?? '',
       blockCode: block?.code ?? '',

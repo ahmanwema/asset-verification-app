@@ -114,6 +114,12 @@ export class AssetDB extends Dexie {
       blocks: 'id, exerciseId, [exerciseId+sortOrder], updatedAt, syncStatus',
       floors: 'id, exerciseId, blockId, [exerciseId+sortOrder], [blockId+sortOrder], updatedAt, syncStatus',
     })
+
+    // v7 lets individual rooms override a floor's default block. This supports
+    // imported floor lists where rooms from different buildings were mixed.
+    this.version(7).stores({
+      rooms: 'id, floorId, exerciseId, blockId, [floorId+sortOrder], [blockId+sortOrder], updatedAt, syncStatus',
+    })
   }
 }
 

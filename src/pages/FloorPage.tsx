@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
 import { loadFloorProgress } from '../lib/queries'
@@ -9,11 +9,17 @@ import { EmptyState, ProgressBar, STATUS_STYLE, SectionTitle, TextInput } from '
 
 export default function FloorPage() {
   const { floorId = '' } = useParams()
+  const [searchParams] = useSearchParams()
+  const blockFilter = searchParams.get('block')
   const t = useT()
   const { exercise } = useSession()
   const [search, setSearch] = useState('')
 
   const floor = useLiveQuery(() => db.floors.get(floorId), [floorId])
+  const blocks = useLiveQuery(async () => {
+    if (!exercise) return []
+    return (await db.blocks.where('exerciseId').equals(exercise.id).toArray()).filter((block) => !block.deleted)
+  }, [exercise?.id])
   const progress = useLiveQuery(async () => {
     if (!exercise) return undefined
     const all = await loadFloorProgress(exercise.id)
@@ -22,8 +28,22 @@ export default function FloorPage() {
 
   if (!floor) return <EmptyState title={t('common.empty')} />
 
+  const knownBlockIds = new Set(blocks?.map((block) => block.id) ?? [])
+  const scopedRooms = (progress?.rooms ?? []).filter((rp) => {
+    if (!blockFilter) return true
+    const effectiveBlockId = rp.room.blockId ?? floor.blockId ?? ''
+    if (blockFilter === 'unassigned') return !effectiveBlockId || !knownBlockIds.has(effectiveBlockId)
+    return effectiveBlockId === blockFilter
+  })
+  const scopedDone = scopedRooms.filter((room) => room.status === 'done').length
+  const scopedInProgress = scopedRooms.filter((room) => room.status === 'in_progress').length
+  const scopedNotStarted = scopedRooms.filter((room) => room.status === 'not_started').length
+  const blockName = blockFilter && blockFilter !== 'unassigned'
+    ? blocks?.find((block) => block.id === blockFilter)?.name
+    : blockFilter === 'unassigned' ? t('setup.unassignedBlock') : undefined
+
   const needle = search.trim().toLocaleLowerCase()
-  const visibleRooms = (progress?.rooms ?? []).filter((rp) => {
+  const visibleRooms = scopedRooms.filter((rp) => {
     if (!needle) return true
     return `${rp.room.name} ${rp.room.code}`.toLocaleLowerCase().includes(needle)
   })
@@ -38,24 +58,23 @@ export default function FloorPage() {
         </Link>
         <div className="min-w-0">
           <h1 className="truncate text-lg font-bold text-slate-900">{floor.name}</h1>
-          <p className="text-xs text-slate-500">
-            {progress ? `${progress.done}/${progress.rooms.length} ${t('common.rooms')}` : ''}
-          </p>
+          {blockName && <p className="truncate text-xs font-semibold text-brand-700">{blockName}</p>}
+          <p className="text-xs text-slate-500">{progress ? `${scopedDone}/${scopedRooms.length} ${t('common.rooms')}` : ''}</p>
         </div>
       </div>
 
       {progress && (
         <div className="card px-4 py-3">
-          <ProgressBar value={progress.done} total={progress.rooms.length} />
+          <ProgressBar value={scopedDone} total={scopedRooms.length} />
           <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold">
             <span className={`chip ${STATUS_STYLE.done.chip}`}>
-              {t('status.done')} {progress.done}
+              {t('status.done')} {scopedDone}
             </span>
             <span className={`chip ${STATUS_STYLE.in_progress.chip}`}>
-              {t('status.in_progress')} {progress.inProgress}
+              {t('status.in_progress')} {scopedInProgress}
             </span>
             <span className={`chip ${STATUS_STYLE.not_started.chip}`}>
-              {t('status.not_started')} {progress.notStarted}
+              {t('status.not_started')} {scopedNotStarted}
             </span>
           </div>
         </div>

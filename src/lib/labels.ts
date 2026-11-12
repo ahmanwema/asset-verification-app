@@ -56,7 +56,8 @@ export async function collectLabels(opts: {
   for (const e of inScope) {
     const room = roomById.get(e.roomId)
     const floor = room ? floorById.get(room.floorId) : undefined
-    const block = floor?.blockId ? blockById.get(floor.blockId) : undefined
+    const effectiveBlockId = room?.blockId ?? floor?.blockId
+    const block = effectiveBlockId ? blockById.get(effectiveBlockId) : undefined
     const description = e.isUnlistedItem
       ? (e.unlistedItemName ?? 'Unlisted item')
       : (typeById.get(e.assetTypeId ?? '')?.name ?? 'Asset')

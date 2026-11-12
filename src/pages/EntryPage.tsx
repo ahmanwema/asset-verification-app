@@ -115,7 +115,8 @@ export default function EntryPage() {
         ? await db.entries.get(editId)
         : undefined
       : entries.find((e) => e.assetTypeId === assetTypeId && !e.deleted)
-    const block = floor?.blockId ? await db.blocks.get(floor.blockId) : undefined
+    const effectiveBlockId = room.blockId ?? floor?.blockId
+    const block = effectiveBlockId ? await db.blocks.get(effectiveBlockId) : undefined
     return {
       room,
       floor,
