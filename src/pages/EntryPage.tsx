@@ -135,6 +135,7 @@ export default function EntryPage() {
   const [loaded, setLoaded] = useState(false)
   const [notPresent, setNotPresent] = useState(false)
   const [quantity, setQuantity] = useState(1)
+  const [quantityInput, setQuantityInput] = useState('1')
   const [unlistedName, setUnlistedName] = useState('')
   const [serials, setSerials] = useState<string[]>([''])
   const [perItemSerials, setPerItemSerials] = useState(false)
@@ -170,6 +171,13 @@ export default function EntryPage() {
   const uploadRef = useRef<HTMLInputElement>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [moveTo, setMoveTo] = useState('')
+
+  // Keep the numeric value stable while allowing the input to be temporarily
+  // empty. Without a separate text draft, deleting "1" immediately clamps it
+  // back to 1 and forces users to tap + dozens of times.
+  useEffect(() => {
+    setQuantityInput(String(quantity))
+  }, [quantity, roomId, assetTypeId, editId])
 
   // Hydrate once the record is known; later live-query ticks must not stomp edits.
   useEffect(() => {
@@ -903,8 +911,16 @@ export default function EntryPage() {
               type="number"
               inputMode="numeric"
               min={1}
-              value={quantity}
-              onChange={(e) => setQty(Number(e.target.value))}
+              value={quantityInput}
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => {
+                const raw = e.target.value
+                setQuantityInput(raw)
+                if (raw === '') return
+                const next = Number(raw)
+                if (Number.isInteger(next) && next >= 1) setQty(next)
+              }}
+              onBlur={() => setQuantityInput(String(quantity))}
               className="h-14 text-center text-2xl font-bold"
             />
             <button

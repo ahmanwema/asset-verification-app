@@ -162,6 +162,8 @@ describe('inspection walkthrough', () => {
 
     // The tag preview reflects the quantity before anything is saved.
     const qty = await screen.findByDisplayValue('1')
+    fireEvent.change(qty, { target: { value: '' } })
+    expect((qty as HTMLInputElement).value).toBe('')
     fireEvent.change(qty, { target: { value: '3' } })
     expect(await screen.findByText('SC-MAIN-1F-P3-003')).toBeTruthy()
 
