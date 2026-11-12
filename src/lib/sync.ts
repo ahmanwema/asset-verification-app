@@ -129,6 +129,49 @@ async function pendingLocalWork(): Promise<number> {
   return count
 }
 
+/**
+ * A new installation is populated with a sample school so the interface can
+ * be explored before an account is connected. Those seed rows are marked
+ * pending, but they are not user work and must not block the first real login.
+ *
+ * Be deliberately strict here: any entry, photo, sign-off, added/deleted row,
+ * or edited seed row makes this return false so actual offline work remains
+ * protected by TenantSwitchPendingError.
+ */
+async function isUntouchedSampleCache(): Promise<boolean> {
+  const seededAt = await getMeta<number | null>('seededAt', null)
+  if (!seededAt) return false
+
+  const [organizations, inspectors, exercises, blocks, floors, rooms, assetTypes, entryCount, signoffCount, photoCount] =
+    await Promise.all([
+      db.organizations.toArray(),
+      db.inspectors.toArray(),
+      db.exercises.toArray(),
+      db.blocks.toArray(),
+      db.floors.toArray(),
+      db.rooms.toArray(),
+      db.assetTypes.toArray(),
+      db.entries.count(),
+      db.signoffs.count(),
+      db.photos.count(),
+    ])
+
+  if (entryCount || signoffCount || photoCount) return false
+  if (organizations.length !== 1 || exercises.length !== 1 || blocks.length !== 1) return false
+  if (!inspectors.length || !floors.length || !rooms.length || !assetTypes.length) return false
+  if (organizations[0].name !== 'Sufa Schools Company Limited' || blocks[0].name !== 'Main Block') return false
+
+  const rows = [...organizations, ...inspectors, ...exercises, ...blocks, ...floors, ...rooms, ...assetTypes]
+  return rows.every(
+    (row) =>
+      row.syncStatus === 'pending' &&
+      !('deleted' in row && row.deleted) &&
+      row.updatedAt >= seededAt &&
+      // Only seeded inspectors receive the +1, +2, ... millisecond offsets.
+      row.updatedAt < seededAt + inspectors.length,
+  )
+}
+
 /** Clears one tenant's cached operational data while retaining device settings. */
 async function clearCachedTenant(): Promise<void> {
   const tables = [
@@ -188,7 +231,8 @@ export async function login(email: string, password: string): Promise<ServerAcco
     if (data.organization?.id) {
       const oldOrgId = await inferLocalOrgId()
       if (oldOrgId && oldOrgId !== data.organization.id) {
-        if ((await pendingLocalWork()) > 0) throw new TenantSwitchPendingError()
+        const untouchedSample = await isUntouchedSampleCache()
+        if ((await pendingLocalWork()) > 0 && !untouchedSample) throw new TenantSwitchPendingError()
         await clearCachedTenant()
       }
       await setMeta(ACTIVE_ORG_KEY, data.organization.id)

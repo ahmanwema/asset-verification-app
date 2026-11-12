@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { db, getMeta, setMeta } from '../db/db'
+import { SEED_DISABLED_KEY, seedIfEmpty } from '../db/seed'
 import { resetDb, seedFixture, type Fixture } from '../test/fixtures'
 import { resolveConflict, saveEntry } from './entries'
 import {
@@ -121,6 +122,46 @@ describe('connection', () => {
 
 describe('switching organizations on one device', () => {
   afterEach(() => vi.unstubAllGlobals())
+
+  it('discards untouched sample rows on the first login to a real organization', async () => {
+    await resetDb()
+    await seedIfEmpty()
+    await setServerUrl(BASE)
+    const sampleOrg = (await db.organizations.toArray())[0]
+    const now = Date.now()
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith('/login')) {
+          return new Response(
+            JSON.stringify({
+              token: 'real-token',
+              inspector: { id: 'usr_real', name: 'Mohamed Sudi', email: 'abuusuleha@gmail.com', role: 'inspector' },
+              organization: { id: 'org_real', name: 'Sufa Schools Company Limited' },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          )
+        }
+        return new Response(
+          JSON.stringify({
+            serverTime: now,
+            accepted: {},
+            conflicts: [],
+            changes: {
+              organizations: [{ id: 'org_real', name: 'Sufa Schools Company Limited', updatedAt: now }],
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    await expect(login('abuusuleha@gmail.com', 'correct-password')).resolves.toMatchObject({ id: 'usr_real' })
+    expect(await db.organizations.get(sampleOrg.id)).toBeUndefined()
+    expect(await db.organizations.get('org_real')).toBeTruthy()
+    expect(await getMeta(SEED_DISABLED_KEY, false)).toBe(true)
+  })
 
   it('replaces the old cache and ignores foreign rows returned by an old server', async () => {
     await db.organizations.toCollection().modify({ syncStatus: 'synced' })
