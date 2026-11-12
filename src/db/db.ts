@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie'
 import type {
   AssetType,
+  Block,
   Exercise,
   Floor,
   InspectionEntry,
@@ -15,6 +16,7 @@ import type {
 export class AssetDB extends Dexie {
   organizations!: Table<Organization, string>
   exercises!: Table<Exercise, string>
+  blocks!: Table<Block, string>
   floors!: Table<Floor, string>
   rooms!: Table<Room, string>
   assetTypes!: Table<AssetType, string>
@@ -105,6 +107,13 @@ export class AssetDB extends Dexie {
             }))
           })
       })
+
+    // v6 adds a block/building level above floors. Existing floors deliberately
+    // remain unassigned so an admin can place them in the correct real block.
+    this.version(6).stores({
+      blocks: 'id, exerciseId, [exerciseId+sortOrder], updatedAt, syncStatus',
+      floors: 'id, exerciseId, blockId, [exerciseId+sortOrder], [blockId+sortOrder], updatedAt, syncStatus',
+    })
   }
 }
 

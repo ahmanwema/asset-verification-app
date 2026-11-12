@@ -1,6 +1,6 @@
 import { db, getMeta, setMeta, uid } from './db'
 import { sha256 } from '../lib/hash'
-import type { AssetType, Exercise, Floor, Inspector, Organization, Room } from '../types'
+import type { AssetType, Block, Exercise, Floor, Inspector, Organization, Room } from '../types'
 
 /** Sufa Schools sample layout from the brief: [floor name, floor code, [room name, room code][]] */
 const FLOOR_PLAN: Array<[string, string, Array<[string, string]>]> = [
@@ -166,12 +166,23 @@ export async function seedIfEmpty(): Promise<void> {
     syncStatus: 'pending',
   }
 
+  const mainBlock: Block = {
+    id: uid('bl_'),
+    exerciseId: exercise.id,
+    name: 'Main Block',
+    code: 'MAIN',
+    sortOrder: 0,
+    updatedAt: now,
+    syncStatus: 'pending',
+  }
+
   const floors: Floor[] = []
   const rooms: Room[] = []
   FLOOR_PLAN.forEach(([floorName, floorCode, roomList], fi) => {
     const floor: Floor = {
       id: uid('fl_'),
       exerciseId: exercise.id,
+      blockId: mainBlock.id,
       name: floorName,
       code: floorCode,
       sortOrder: fi,
@@ -208,11 +219,12 @@ export async function seedIfEmpty(): Promise<void> {
 
   await db.transaction(
     'rw',
-    [db.organizations, db.exercises, db.floors, db.rooms, db.assetTypes, db.inspectors, db.meta],
+    [db.organizations, db.exercises, db.blocks, db.floors, db.rooms, db.assetTypes, db.inspectors, db.meta],
     async () => {
       await db.organizations.add(org)
       await db.inspectors.bulkAdd(inspectors)
       await db.exercises.add(exercise)
+      await db.blocks.add(mainBlock)
       await db.floors.bulkAdd(floors)
       await db.rooms.bulkAdd(rooms)
       await db.assetTypes.bulkAdd(assetTypes)

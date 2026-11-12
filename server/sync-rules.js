@@ -17,6 +17,7 @@ export const SYNC_TABLES = new Set([
   'organizations',
   'inspectors',
   'exercises',
+  'blocks',
   'floors',
   'rooms',
   'assetTypes',

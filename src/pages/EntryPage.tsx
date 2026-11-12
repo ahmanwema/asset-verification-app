@@ -115,9 +115,11 @@ export default function EntryPage() {
         ? await db.entries.get(editId)
         : undefined
       : entries.find((e) => e.assetTypeId === assetTypeId && !e.deleted)
+    const block = floor?.blockId ? await db.blocks.get(floor.blockId) : undefined
     return {
       room,
       floor,
+      block,
       assetType,
       assetTypes: assetTypes.filter((a) => a.active),
       entries,
@@ -240,6 +242,7 @@ export default function EntryPage() {
       assetCode,
       floorCode: ctx.floor.code,
       roomCode: ctx.room.code,
+      blockCode: ctx.block?.code,
       quantity,
       keepEntryId: ctx.existing?.id,
     }).then((tags) => {
@@ -248,7 +251,7 @@ export default function EntryPage() {
     return () => {
       cancelled = true
     }
-  }, [ctx?.room, ctx?.floor, ctx?.existing?.id, assetCode, quantity, manualTags, notPresent])
+  }, [ctx?.room, ctx?.floor, ctx?.block?.code, ctx?.existing?.id, assetCode, quantity, manualTags, notPresent])
 
   const previews = useMemo(() => photos.map((p) => ({ id: p.id, url: URL.createObjectURL(p.blob) })), [photos])
   useEffect(() => () => previews.forEach((p) => URL.revokeObjectURL(p.url)), [previews])

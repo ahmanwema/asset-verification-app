@@ -18,7 +18,18 @@ describe('tag format', () => {
 
   it('round-trips through the parser', () => {
     expect(parseTag('SC-1F-P3-001')).toEqual({ assetCode: 'SC', floorCode: '1F', roomCode: 'P3', seq: 1 })
+    expect(parseTag('SC-ADM-GF-R1-007')).toEqual({
+      assetCode: 'SC',
+      blockCode: 'ADM',
+      floorCode: 'GF',
+      roomCode: 'R1',
+      seq: 7,
+    })
     expect(parseTag('not-a-tag')).toBeNull()
+  })
+
+  it('includes a block code when the location belongs to a block', () => {
+    expect(formatTag('SC', 'GF', 'R1', 1, 'ADM')).toBe('SC-ADM-GF-R1-001')
   })
 
   it('derives short codes for unlisted items and rooms', () => {

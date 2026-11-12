@@ -64,7 +64,7 @@ export default function LabelsPage() {
       if (photoFilter === 'with' && label.photoCount === 0) return false
       if (photoFilter === 'without' && label.photoCount > 0) return false
       if (!q) return true
-      return [label.tag, label.description, label.floor, label.room, label.serial].some((value) =>
+      return [label.tag, label.description, label.block, label.floor, label.room, label.serial].some((value) =>
         value.toLowerCase().includes(q),
       )
     })
@@ -72,10 +72,10 @@ export default function LabelsPage() {
 
   const visibleLabels = filteredLabels.slice(0, MAX_VISIBLE)
   const groups = useMemo(() => {
-    const grouped = new Map<string, { floor: string; room: string; labels: LabelData[] }>()
+    const grouped = new Map<string, { block: string; floor: string; room: string; labels: LabelData[] }>()
     for (const label of visibleLabels) {
-      const key = `${label.floor}\u0000${label.room}`
-      const group = grouped.get(key) ?? { floor: label.floor, room: label.room, labels: [] }
+      const key = `${label.block}\u0000${label.floor}\u0000${label.room}`
+      const group = grouped.get(key) ?? { block: label.block, floor: label.floor, room: label.room, labels: [] }
       group.labels.push(label)
       grouped.set(key, group)
     }
@@ -212,11 +212,13 @@ export default function LabelsPage() {
 
           <div className="space-y-3">
             {groups.map((group) => (
-              <section key={`${group.floor}|${group.room}`}>
+              <section key={`${group.block}|${group.floor}|${group.room}`}>
                 <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
                   <div className="min-w-0">
                     <p className="truncate text-xs font-bold text-slate-800">{group.room || '—'}</p>
-                    <p className="truncate text-[11px] text-slate-500">{group.floor}</p>
+                    <p className="truncate text-[11px] text-slate-500">
+                      {[group.block, group.floor].filter(Boolean).join(' · ')}
+                    </p>
                   </div>
                   <span className="chip shrink-0 bg-slate-100 text-slate-600">
                     {t('labels.count', { n: group.labels.length })}
@@ -307,7 +309,7 @@ function LabelPhotoSheet({ label, onClose }: { label: LabelData | null; onClose:
         <div>
           <p className="font-semibold text-slate-900">{label.description}</p>
           <p className="text-xs text-slate-500">
-            {label.floor} · {label.room}
+            {[label.block, label.floor, label.room].filter(Boolean).join(' · ')}
             {label.serial ? ` · ${label.serial}` : ''}
           </p>
           <span className={`chip mt-1 inline-block ${CONDITION_STYLE[label.condition].chip}`}>

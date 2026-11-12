@@ -135,6 +135,7 @@ export async function saveEntry(draft: EntryDraft): Promise<InspectionEntry> {
   const assetCode = draft.isUnlistedItem
     ? deriveCode(draft.unlistedItemName ?? 'Unlisted')
     : (draft.assetType?.code ?? 'XX')
+  const block = draft.floor.blockId ? await db.blocks.get(draft.floor.blockId) : undefined
 
   const tagNumbers = draft.manualTagNumbers?.length
     ? draft.manualTagNumbers.map((t) => t.trim().toUpperCase()).filter(Boolean)
@@ -143,6 +144,7 @@ export async function saveEntry(draft: EntryDraft): Promise<InspectionEntry> {
         assetCode,
         floorCode: draft.floor.code,
         roomCode: draft.room.code,
+        blockCode: block?.code,
         quantity,
         keepEntryId: id,
       })

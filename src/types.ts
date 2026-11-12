@@ -30,9 +30,22 @@ export interface Exercise {
   syncStatus: SyncStatus
 }
 
+export interface Block {
+  id: string
+  exerciseId: string
+  name: string
+  code: string
+  sortOrder: number
+  deleted?: boolean
+  updatedAt: number
+  syncStatus: SyncStatus
+}
+
 export interface Floor {
   id: string
   exerciseId: string
+  /** Optional for data created before blocks were introduced. */
+  blockId?: string
   name: string
   code: string // used in tag numbers, e.g. GF, 1F
   sortOrder: number

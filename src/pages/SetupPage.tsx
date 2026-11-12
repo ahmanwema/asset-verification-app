@@ -27,11 +27,15 @@ import {
   TextInput,
   Toast,
 } from '../components/ui'
-import type { AssetType, Floor, Inspector, Role, Room } from '../types'
+import type { AssetType, Block, Floor, Inspector, Role, Room } from '../types'
 
 type Tab = 'org' | 'floors' | 'assets' | 'team' | 'data'
 
 /** Every write stamps updatedAt and re-queues the record for sync. */
+async function patchBlock(id: string, fields: Partial<Block>) {
+  const row = await db.blocks.get(id)
+  if (row) await db.blocks.put({ ...row, ...fields, updatedAt: Date.now(), syncStatus: 'pending' })
+}
 async function patchFloor(id: string, fields: Partial<Floor>) {
   const row = await db.floors.get(id)
   if (row) await db.floors.put({ ...row, ...fields, updatedAt: Date.now(), syncStatus: 'pending' })
@@ -247,18 +251,22 @@ function FloorsTab({
 }) {
   const t = useT()
   const [openFloor, setOpenFloor] = useState<string | null>(null)
+  const [newBlock, setNewBlock] = useState('')
   const [newFloor, setNewFloor] = useState('')
+  const [newFloorBlock, setNewFloorBlock] = useState('')
   const [newRoom, setNewRoom] = useState('')
 
   const data = useLiveQuery(async () => {
     if (!exerciseId) return undefined
-    const [floors, rooms, entries] = await Promise.all([
+    const [blocks, floors, rooms, entries] = await Promise.all([
+      db.blocks.where('exerciseId').equals(exerciseId).toArray(),
       db.floors.where('exerciseId').equals(exerciseId).toArray(),
       db.rooms.where('exerciseId').equals(exerciseId).toArray(),
       db.entries.where('exerciseId').equals(exerciseId).toArray(),
     ])
     const used = new Set(entries.filter((e) => !e.deleted).map((e) => e.roomId))
     return {
+      blocks: blocks.filter((block) => !block.deleted).sort((a, b) => a.sortOrder - b.sortOrder),
       floors: floors.sort((a, b) => a.sortOrder - b.sortOrder),
       rooms: rooms.sort((a, b) => a.sortOrder - b.sortOrder),
       used,
@@ -269,8 +277,25 @@ function FloorsTab({
 
   // Bind the narrowed values: hoisted function declarations below would
   // otherwise see the optional types again.
-  const { floors, rooms, used } = data
+  const { blocks, floors, rooms, used } = data
   const exId = exerciseId
+
+  async function addBlock() {
+    const name = newBlock.trim()
+    if (!name) return
+    const block: Block = {
+      id: uid('bl_'),
+      exerciseId: exId,
+      name,
+      code: deriveCode(name, 6),
+      sortOrder: blocks.length,
+      updatedAt: Date.now(),
+      syncStatus: 'pending',
+    }
+    await db.blocks.add(block)
+    setNewBlock('')
+    if (!newFloorBlock) setNewFloorBlock(block.id)
+  }
 
   async function addFloor() {
     const name = newFloor.trim()
@@ -278,6 +303,7 @@ function FloorsTab({
     await db.floors.add({
       id: uid('fl_'),
       exerciseId: exId,
+      blockId: newFloorBlock || undefined,
       name,
       code: deriveCode(name, 3),
       sortOrder: floors.length,
@@ -322,112 +348,200 @@ function FloorsTab({
     await db.floors.delete(floor.id)
   }
 
-  return (
-    <div className="space-y-3">
-      {floors.map((floor) => {
-        const floorRooms = rooms.filter((r) => r.floorId === floor.id)
-        const open = openFloor === floor.id
-        return (
-          <Card key={floor.id} className="p-3">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setOpenFloor(open ? null : floor.id)}
-                className="min-w-0 flex-1 text-left"
+  async function removeBlock(block: Block) {
+    if (floors.some((floor) => floor.blockId === block.id)) {
+      flash(t('setup.blockDeleteBlocked'))
+      return
+    }
+    await patchBlock(block.id, { deleted: true })
+  }
+
+  function floorCard(floor: Floor) {
+    const floorRooms = rooms.filter((r) => r.floorId === floor.id)
+    const open = openFloor === floor.id
+    return (
+      <Card key={floor.id} className="p-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setOpenFloor(open ? null : floor.id)}
+            className="min-w-0 flex-1 text-left"
+          >
+            <p className="truncate font-semibold text-slate-900">{floor.name}</p>
+            <p className="text-xs text-slate-500">
+              {floor.code} · {floorRooms.length} {t('common.rooms')}
+            </p>
+          </button>
+          <svg
+            viewBox="0 0 24 24"
+            className={`h-5 w-5 text-slate-400 transition ${open ? 'rotate-90' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+
+        {open && (
+          <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
+            <Field label={t('setup.block')} hint={t('setup.moveFloorHint')}>
+              <Select
+                value={floor.blockId ?? ''}
+                disabled={!canEdit}
+                onChange={(e) => void patchFloor(floor.id, { blockId: e.target.value || undefined })}
               >
-                <p className="truncate font-semibold text-slate-900">{floor.name}</p>
-                <p className="text-xs text-slate-500">
-                  {floor.code} · {floorRooms.length} {t('common.rooms')}
-                </p>
-              </button>
-              <svg
-                viewBox="0 0 24 24"
-                className={`h-5 w-5 text-slate-400 transition ${open ? 'rotate-90' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+                <option value="">{t('setup.unassignedBlock')}</option>
+                {blocks.map((block) => (
+                  <option key={block.id} value={block.id}>{block.name}</option>
+                ))}
+              </Select>
+            </Field>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="col-span-2">
+                <Field label={t('setup.floorName')}>
+                  <TextInput
+                    defaultValue={floor.name}
+                    disabled={!canEdit}
+                    onBlur={(e) => void patchFloor(floor.id, { name: e.target.value })}
+                  />
+                </Field>
+              </div>
+              <Field label={t('common.code')} hint={t('setup.codeHint')}>
+                <TextInput
+                  defaultValue={floor.code}
+                  disabled={!canEdit}
+                  onBlur={(e) => void patchFloor(floor.id, { code: e.target.value.toUpperCase() })}
+                  className="font-mono"
+                />
+              </Field>
             </div>
 
-            {open && (
-              <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="col-span-2">
-                    <Field label={t('setup.floorName')}>
-                      <TextInput
-                        defaultValue={floor.name}
-                        disabled={!canEdit}
-                        onBlur={(e) => void patchFloor(floor.id, { name: e.target.value })}
-                      />
-                    </Field>
-                  </div>
-                  <Field label={t('common.code')} hint={t('setup.codeHint')}>
-                    <TextInput
-                      defaultValue={floor.code}
-                      disabled={!canEdit}
-                      onBlur={(e) => void patchFloor(floor.id, { code: e.target.value.toUpperCase() })}
-                      className="font-mono"
-                    />
-                  </Field>
+            <ul className="space-y-1.5">
+              {floorRooms.map((room) => (
+                <li key={room.id} className="flex items-center gap-2">
+                  <TextInput
+                    defaultValue={room.name}
+                    disabled={!canEdit}
+                    onBlur={(e) => void patchRoom(room.id, { name: e.target.value })}
+                    className="py-2"
+                  />
+                  <TextInput
+                    defaultValue={room.code}
+                    disabled={!canEdit}
+                    onBlur={(e) => void patchRoom(room.id, { code: e.target.value.toUpperCase() })}
+                    className="w-20 py-2 text-center font-mono"
+                  />
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => void removeRoom(room)}
+                      className="shrink-0 rounded-lg px-2 py-2 text-lg text-slate-400 hover:bg-red-50 hover:text-red-600"
+                      aria-label={t('common.delete')}
+                    >
+                      ×
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+
+            {canEdit && (
+              <>
+                <div className="flex gap-2">
+                  <TextInput
+                    placeholder={t('setup.roomName')}
+                    value={newRoom}
+                    onChange={(e) => setNewRoom(e.target.value)}
+                    className="py-2"
+                  />
+                  <Button variant="secondary" className="shrink-0 px-3" onClick={() => void addRoom(floor.id)}>
+                    {t('setup.addRoom')}
+                  </Button>
                 </div>
-
-                <ul className="space-y-1.5">
-                  {floorRooms.map((room) => (
-                    <li key={room.id} className="flex items-center gap-2">
-                      <TextInput
-                        defaultValue={room.name}
-                        disabled={!canEdit}
-                        onBlur={(e) => void patchRoom(room.id, { name: e.target.value })}
-                        className="py-2"
-                      />
-                      <TextInput
-                        defaultValue={room.code}
-                        disabled={!canEdit}
-                        onBlur={(e) => void patchRoom(room.id, { code: e.target.value.toUpperCase() })}
-                        className="w-20 py-2 text-center font-mono"
-                      />
-                      {canEdit && (
-                        <button
-                          type="button"
-                          onClick={() => void removeRoom(room)}
-                          className="shrink-0 rounded-lg px-2 py-2 text-lg text-slate-400 hover:bg-red-50 hover:text-red-600"
-                          aria-label={t('common.delete')}
-                        >
-                          ×
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-
-                {canEdit && (
-                  <>
-                    <div className="flex gap-2">
-                      <TextInput
-                        placeholder={t('setup.roomName')}
-                        value={newRoom}
-                        onChange={(e) => setNewRoom(e.target.value)}
-                        className="py-2"
-                      />
-                      <Button variant="secondary" className="shrink-0 px-3" onClick={() => void addRoom(floor.id)}>
-                        {t('setup.addRoom')}
-                      </Button>
-                    </div>
-                    <Button variant="danger" full onClick={() => void removeFloor(floor)}>
-                      {t('common.delete')} — {floor.name}
-                    </Button>
-                  </>
-                )}
-              </div>
+                <Button variant="danger" full onClick={() => void removeFloor(floor)}>
+                  {t('common.delete')} — {floor.name}
+                </Button>
+              </>
             )}
-          </Card>
+          </div>
+        )}
+      </Card>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {canEdit && (
+        <Card className="space-y-2 p-3">
+          <SectionTitle>{t('setup.addBlock')}</SectionTitle>
+          <div className="flex gap-2">
+            <TextInput
+              placeholder={t('setup.blockName')}
+              value={newBlock}
+              onChange={(e) => setNewBlock(e.target.value)}
+            />
+            <Button className="shrink-0 px-3" onClick={() => void addBlock()}>{t('setup.addBlock')}</Button>
+          </div>
+        </Card>
+      )}
+
+      {floors.some((floor) => !floor.blockId || !blocks.some((block) => block.id === floor.blockId)) && (
+        <section className="space-y-2">
+          <SectionTitle>{t('setup.unassignedBlock')}</SectionTitle>
+          {floors
+            .filter((floor) => !floor.blockId || !blocks.some((block) => block.id === floor.blockId))
+            .map(floorCard)}
+        </section>
+      )}
+
+      {blocks.map((block) => {
+        const blockFloors = floors.filter((floor) => floor.blockId === block.id)
+        return (
+          <section key={block.id} className="space-y-2">
+            <Card className="space-y-2 border-brand-200 bg-brand-50/40 p-3">
+              {canEdit ? (
+                <div className="grid grid-cols-[1fr_6rem_auto] gap-2">
+                  <TextInput
+                    defaultValue={block.name}
+                    aria-label={t('setup.blockName')}
+                    onBlur={(e) => void patchBlock(block.id, { name: e.target.value })}
+                    className="font-semibold"
+                  />
+                  <TextInput
+                    defaultValue={block.code}
+                    aria-label={t('common.code')}
+                    onBlur={(e) => void patchBlock(block.id, { code: e.target.value.toUpperCase() })}
+                    className="text-center font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void removeBlock(block)}
+                    className="rounded-lg px-2 text-lg text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    aria-label={t('common.delete')}
+                  >×</button>
+                </div>
+              ) : (
+                <div>
+                  <p className="font-bold text-brand-900">{block.name}</p>
+                  <p className="text-xs text-slate-500">{block.code}</p>
+                </div>
+              )}
+              <p className="text-xs text-slate-500">{blockFloors.length} {t('setup.floorCount')}</p>
+            </Card>
+            <div className="space-y-2 pl-2">{blockFloors.map(floorCard)}</div>
+          </section>
         )
       })}
 
       {canEdit && (
-        <Card className="flex gap-2 p-3">
+        <Card className="space-y-2 p-3">
+          <Select value={newFloorBlock} onChange={(e) => setNewFloorBlock(e.target.value)}>
+            <option value="">{t('setup.unassignedBlock')}</option>
+            {blocks.map((block) => <option key={block.id} value={block.id}>{block.name}</option>)}
+          </Select>
+          <div className="flex gap-2">
           <TextInput
             placeholder={t('setup.floorName')}
             value={newFloor}
@@ -436,6 +550,7 @@ function FloorsTab({
           <Button className="shrink-0 px-3" onClick={() => void addFloor()}>
             {t('setup.addFloor')}
           </Button>
+          </div>
         </Card>
       )}
     </div>

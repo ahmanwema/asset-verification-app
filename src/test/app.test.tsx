@@ -39,12 +39,43 @@ beforeEach(async () => {
 
 describe('sample data', () => {
   it('loads the Sufa Schools layout exactly once', async () => {
+    expect(await db.blocks.count()).toBe(1)
     expect(await db.floors.count()).toBe(5)
     expect(await db.rooms.count()).toBe(51)
     expect(await db.assetTypes.count()).toBe(16)
 
     await seedIfEmpty() // idempotent: a second call must not duplicate anything
     expect(await db.rooms.count()).toBe(51)
+  })
+})
+
+describe('blocks', () => {
+  it('adds a block and moves an existing floor into it without moving its rooms', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('Setup'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Blocks, floors & rooms' }))
+
+    fireEvent.change(await screen.findByPlaceholderText('Block name'), { target: { value: 'Administration Block' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add block' }))
+
+    const block = await waitFor(async () => {
+      const row = await db.blocks.filter((candidate) => candidate.name === 'Administration Block').first()
+      expect(row).toBeTruthy()
+      return row!
+    })
+
+    const floorHeading = await screen.findByText('1st Floor')
+    fireEvent.click(floorHeading)
+    const floorCard = floorHeading.closest('div.card') as HTMLElement
+    const originalFloor = await db.floors.filter((candidate) => candidate.name === '1st Floor').first()
+    const originalRoomCount = await db.rooms.where('floorId').equals(originalFloor!.id).count()
+    fireEvent.change(within(floorCard).getByLabelText('Block'), { target: { value: block.id } })
+
+    await waitFor(async () => {
+      const floor = await db.floors.filter((candidate) => candidate.name === '1st Floor').first()
+      expect(floor?.blockId).toBe(block.id)
+      expect(await db.rooms.where('floorId').equals(floor!.id).count()).toBe(originalRoomCount)
+    })
   })
 })
 
@@ -100,7 +131,7 @@ describe('inspection walkthrough', () => {
     // The tag preview reflects the quantity before anything is saved.
     const qty = await screen.findByDisplayValue('1')
     fireEvent.change(qty, { target: { value: '3' } })
-    expect(await screen.findByText('SC-1F-P3-003')).toBeTruthy()
+    expect(await screen.findByText('SC-MAIN-1F-P3-003')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
 
@@ -108,7 +139,7 @@ describe('inspection walkthrough', () => {
       const entries = await db.entries.toArray()
       expect(entries).toHaveLength(1)
       expect(entries[0].quantity).toBe(3)
-      expect(entries[0].tagNumbers).toEqual(['SC-1F-P3-001', 'SC-1F-P3-002', 'SC-1F-P3-003'])
+      expect(entries[0].tagNumbers).toEqual(['SC-MAIN-1F-P3-001', 'SC-MAIN-1F-P3-002', 'SC-MAIN-1F-P3-003'])
     })
   })
 })
@@ -881,13 +912,13 @@ describe('viewing a report before exporting it', () => {
 
     // The rows are on screen, with their column headings.
     expect(await screen.findByText('Tag Number', undefined, { timeout: 5000 })).toBeTruthy()
-    expect(await screen.findByText('SC-1F-P3-001')).toBeTruthy()
-    expect(screen.getByText('SC-1F-P3-002')).toBeTruthy()
+    expect(await screen.findByText('SC-MAIN-1F-P3-001')).toBeTruthy()
+    expect(screen.getByText('SC-MAIN-1F-P3-002')).toBeTruthy()
 
     // Searching narrows it.
     fireEvent.change(screen.getByLabelText(/search/i), { target: { value: 'P3-002' } })
-    await waitFor(() => expect(screen.queryByText('SC-1F-P3-001')).toBeNull())
-    expect(screen.getByText('SC-1F-P3-002')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText('SC-MAIN-1F-P3-001')).toBeNull())
+    expect(screen.getByText('SC-MAIN-1F-P3-002')).toBeTruthy()
 
     // A search that matches nothing says so rather than showing a blank table.
     fireEvent.change(screen.getByLabelText(/search/i), { target: { value: 'zzzz' } })
@@ -909,15 +940,15 @@ describe('finding labels before printing', () => {
     fireEvent.click(screen.getByRole('link', { name: /labels/i }))
 
     expect(await screen.findAllByText('Showing 2 of 2', undefined, { timeout: 5000 })).toHaveLength(2)
-    expect(screen.getByText('SC-1F-P3-001')).toBeTruthy()
-    expect(screen.getByText('SC-1F-P3-002')).toBeTruthy()
+    expect(screen.getByText('SC-MAIN-1F-P3-001')).toBeTruthy()
+    expect(screen.getByText('SC-MAIN-1F-P3-002')).toBeTruthy()
     expect(screen.getByLabelText('Condition')).toBeTruthy()
     expect(screen.getByLabelText('Photos')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'P3-002' } })
-    await waitFor(() => expect(screen.queryByText('SC-1F-P3-001')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('SC-MAIN-1F-P3-001')).toBeNull())
     expect(screen.getAllByText('Showing 1 of 2')).toHaveLength(2)
-    expect(screen.getByText('SC-1F-P3-002')).toBeTruthy()
+    expect(screen.getByText('SC-MAIN-1F-P3-002')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
     fireEvent.change(screen.getByLabelText('Photos'), { target: { value: 'with' } })

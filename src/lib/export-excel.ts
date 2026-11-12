@@ -65,8 +65,9 @@ function conditionSummary(entry: InspectionEntry): string {
 
 /** Pulls everything the reports need and shapes the rows for each sheet. */
 export async function buildReportBundle(exerciseId: string): Promise<ReportBundle> {
-  const [exercise, floors, rooms, assetTypes, inspectors, entriesRaw, signoffs, orgs] = await Promise.all([
+  const [exercise, blocks, floors, rooms, assetTypes, inspectors, entriesRaw, signoffs, orgs] = await Promise.all([
     db.exercises.get(exerciseId),
+    db.blocks.where('exerciseId').equals(exerciseId).toArray().then((rows) => rows.filter((block) => !block.deleted)),
     db.floors.where('exerciseId').equals(exerciseId).toArray(),
     db.rooms.where('exerciseId').equals(exerciseId).toArray(),
     db.assetTypes.toArray(),
@@ -77,6 +78,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
   ])
 
   const org = orgs.find((o) => o.id === exercise?.orgId)
+  const blockById = new Map(blocks.map((b) => [b.id, b]))
   const floorById = new Map(floors.map((f) => [f.id, f]))
   const roomById = new Map(rooms.map((r) => [r.id, r]))
   const typeById = new Map(assetTypes.map((a) => [a.id, a]))
@@ -87,7 +89,11 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
   const locationOf = (roomId: string) => {
     const room = roomById.get(roomId)
     const floor = room ? floorById.get(room.floorId) : undefined
+    const block = floor?.blockId ? blockById.get(floor.blockId) : undefined
     return {
+      blockName: block?.name ?? '',
+      blockCode: block?.code ?? '',
+      blockOrder: block?.sortOrder ?? 99,
       floorName: floor?.name ?? '',
       floorCode: floor?.code ?? '',
       floorOrder: floor?.sortOrder ?? 99,
@@ -100,6 +106,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
   const sorted = [...entries].sort((a, b) => {
     const la = locationOf(a.roomId)
     const lb = locationOf(b.roomId)
+    if (la.blockOrder !== lb.blockOrder) return la.blockOrder - lb.blockOrder
     if (la.floorOrder !== lb.floorOrder) return la.floorOrder - lb.floorOrder
     if (la.roomOrder !== lb.roomOrder) return la.roomOrder - lb.roomOrder
     return (a.tagNumbers[0] ?? '').localeCompare(b.tagNumbers[0] ?? '')
@@ -128,6 +135,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         'Asset Description': nameOf(e),
         'Asset Code': e.isUnlistedItem ? 'UNLISTED' : (at?.code ?? ''),
         Category: e.isUnlistedItem ? 'Unlisted' : (at?.category ?? ''),
+        Block: loc.blockName,
         Floor: loc.floorName,
         Room: loc.roomName,
         'Serial Number': e.serialNumbers[i] ?? e.serialNumbers[0] ?? 'N/A',
@@ -171,6 +179,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         'Tag Number': tag,
         'Asset Description': nameOf(e),
         Category: e.isUnlistedItem ? 'Unlisted' : (typeById.get(e.assetTypeId ?? '')?.category ?? ''),
+        Block: loc.blockName,
         Floor: loc.floorName,
         Room: loc.roomName,
         'Serial Number': e.serialNumbers[index] ?? e.serialNumbers[0] ?? '',
@@ -212,6 +221,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
 
     for (const e of roomEntries) {
       roomRows.push({
+        Block: loc.blockName,
         Floor: loc.floorName,
         Room: room.name,
         Item: nameOf(e),
@@ -238,6 +248,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
 
     const found = roomEntries.filter((e) => !e.notPresent).reduce((n, e) => n + e.quantity, 0)
     roomTotals.push({
+      Block: loc.blockName,
       Floor: loc.floorName,
       Room: room.name,
       'Room Code': room.code,
@@ -267,6 +278,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         Condition: CONDITION_LABEL[c],
         Quantity: n,
         Item: nameOf(e),
+        Block: loc.blockName,
         Floor: loc.floorName,
         Room: loc.roomName,
         'Tag Numbers': e.tagNumbers.join(', '),
@@ -297,6 +309,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
       variance.push({
         Type: 'Expected but not found',
         Item: nameOf(e),
+        Block: loc.blockName,
         Floor: loc.floorName,
         Room: loc.roomName,
         Quantity: 0,
@@ -313,6 +326,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
       variance.push({
         Type: 'Found in the wrong room',
         Item: nameOf(e),
+        Block: loc.blockName,
         Floor: loc.floorName,
         Room: loc.roomName,
         Quantity: e.quantity,
@@ -325,6 +339,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
       variance.push({
         Type: 'Unlisted item found',
         Item: nameOf(e),
+        Block: loc.blockName,
         Floor: loc.floorName,
         Room: loc.roomName,
         Quantity: e.quantity,
@@ -343,6 +358,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
       variance.push({
         Type: 'Room not inspected',
         Item: '',
+        Block: loc.blockName,
         Floor: loc.floorName,
         Room: room.name,
         Quantity: 0,
@@ -362,6 +378,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
       tags.push({
         'Tag Number': tag,
         'Asset Description': nameOf(e),
+        Block: loc.blockName,
         Floor: loc.floorName,
         Room: loc.roomName,
         'Serial Number': e.serialNumbers[i] ?? '',
@@ -387,6 +404,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
           'Old Value': logValue(h.field, h.oldValue),
           'New Value': logValue(h.field, h.newValue),
           Item: nameOf(e),
+          Block: loc.blockName,
           Floor: loc.floorName,
           Room: loc.roomName,
           'Tag Numbers': e.tagNumbers.join(', '),
@@ -416,6 +434,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
     { Metric: 'Team leader', Value: whoById.get(exercise?.teamLeaderId ?? '')?.name ?? '' },
     { Metric: 'Approval authority', Value: exercise?.approvedBy ?? '' },
     { Metric: 'Report generated', Value: fmtDate(Date.now()) },
+    { Metric: 'Blocks', Value: blocks.length },
     { Metric: 'Floors', Value: floors.length },
     { Metric: 'Rooms', Value: rooms.length },
     { Metric: 'Rooms signed off', Value: signoffByRoom.size },

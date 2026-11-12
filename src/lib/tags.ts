@@ -2,13 +2,15 @@ import { db } from '../db/db'
 import type { AssetType, Floor, InspectionEntry, Room } from '../types'
 
 /**
- * Tag numbers follow [AssetCode]-[FloorCode]-[RoomCode]-[Seq],
- * e.g. SC-1F-P3-001 = Student Chair, 1st Floor, room P3, item 1.
+ * Tag numbers created inside a block follow
+ * [AssetCode]-[BlockCode]-[FloorCode]-[RoomCode]-[Seq]. Legacy locations with
+ * no block retain [AssetCode]-[FloorCode]-[RoomCode]-[Seq].
  */
-export const TAG_PATTERN = /^([A-Z0-9]{1,6})-([A-Z0-9]{1,4})-([A-Z0-9]{1,6})-(\d{3,4})$/
+export const TAG_PATTERN = /^([A-Z0-9]{1,6})-(?:([A-Z0-9]{1,6})-)?([A-Z0-9]{1,4})-([A-Z0-9]{1,6})-(\d{3,4})$/
 
 export interface ParsedTag {
   assetCode: string
+  blockCode?: string
   floorCode: string
   roomCode: string
   seq: number
@@ -17,11 +19,18 @@ export interface ParsedTag {
 export function parseTag(tag: string): ParsedTag | null {
   const m = TAG_PATTERN.exec(tag.trim().toUpperCase())
   if (!m) return null
-  return { assetCode: m[1], floorCode: m[2], roomCode: m[3], seq: Number(m[4]) }
+  return {
+    assetCode: m[1],
+    ...(m[2] ? { blockCode: m[2] } : {}),
+    floorCode: m[3],
+    roomCode: m[4],
+    seq: Number(m[5]),
+  }
 }
 
-export function formatTag(assetCode: string, floorCode: string, roomCode: string, seq: number): string {
-  return `${assetCode}-${floorCode}-${roomCode}-${String(seq).padStart(3, '0')}`
+export function formatTag(assetCode: string, floorCode: string, roomCode: string, seq: number, blockCode?: string): string {
+  const location = blockCode ? `${blockCode}-${floorCode}-${roomCode}` : `${floorCode}-${roomCode}`
+  return `${assetCode}-${location}-${String(seq).padStart(3, '0')}`
 }
 
 /** Builds a short uppercase code from a free-text name, for unlisted items. */
@@ -61,10 +70,11 @@ export async function allocateTagNumbers(opts: {
   assetCode: string
   floorCode: string
   roomCode: string
+  blockCode?: string
   quantity: number
   keepEntryId?: string
 }): Promise<string[]> {
-  const { roomId, assetCode, floorCode, roomCode, quantity, keepEntryId } = opts
+  const { roomId, assetCode, floorCode, roomCode, blockCode, quantity, keepEntryId } = opts
   if (quantity <= 0) return []
 
   const entries = await db.entries.where('roomId').equals(roomId).toArray()
@@ -86,7 +96,7 @@ export async function allocateTagNumbers(opts: {
   const out = keep.slice(0, quantity)
   let seq = 1
   while (out.length < quantity) {
-    const candidate = formatTag(assetCode, floorCode, roomCode, seq)
+    const candidate = formatTag(assetCode, floorCode, roomCode, seq, blockCode)
     if (!used.has(seq) && !out.includes(candidate)) out.push(candidate)
     seq += 1
     if (seq > 9999) break
@@ -99,6 +109,7 @@ export async function allocateForEntry(opts: {
   room: Room
   floor: Floor
   assetCode: string
+  blockCode?: string
   quantity: number
   keepEntryId?: string
 }): Promise<string[]> {
@@ -107,6 +118,7 @@ export async function allocateForEntry(opts: {
     assetCode: opts.assetCode,
     floorCode: opts.floor.code,
     roomCode: opts.room.code,
+    blockCode: opts.blockCode,
     quantity: opts.quantity,
     keepEntryId: opts.keepEntryId,
   })

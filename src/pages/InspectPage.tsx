@@ -10,9 +10,13 @@ export default function InspectPage() {
   const t = useT()
   const { exercise } = useSession()
 
-  const floors = useLiveQuery(async () => {
-    if (!exercise) return []
-    return loadFloorProgress(exercise.id)
+  const data = useLiveQuery(async () => {
+    if (!exercise) return { floors: [], blocks: [] }
+    const [floors, blocks] = await Promise.all([
+      loadFloorProgress(exercise.id),
+      db.blocks.where('exerciseId').equals(exercise.id).sortBy('sortOrder').then((rows) => rows.filter((block) => !block.deleted)),
+    ])
+    return { floors, blocks }
   }, [exercise?.id])
 
   // useLiveQuery re-runs on any write to the tables it touched, so the
@@ -33,10 +37,20 @@ export default function InspectPage() {
 
       <SectionTitle>{t('room.pickFloor')}</SectionTitle>
 
-      {floors === undefined && <p className="text-sm text-slate-500">{t('common.loading')}</p>}
+      {data === undefined && <p className="text-sm text-slate-500">{t('common.loading')}</p>}
 
-      <div className="space-y-2">
-        {floors?.map((fp) => {
+      <div className="space-y-4">
+        {[
+          ...(data?.blocks.map((block) => ({ id: block.id, name: block.name })) ?? []),
+          ...(data?.floors.some((fp) => !fp.floor.blockId || !data.blocks.some((b) => b.id === fp.floor.blockId))
+            ? [{ id: '', name: t('setup.unassignedBlock') }]
+            : []),
+        ].map((group) => (
+          <section key={group.id || 'unassigned'} className="space-y-2">
+            <SectionTitle>{group.name}</SectionTitle>
+            {data?.floors
+              .filter((fp) => group.id ? fp.floor.blockId === group.id : !fp.floor.blockId || !data.blocks.some((b) => b.id === fp.floor.blockId))
+              .map((fp) => {
           const total = fp.rooms.length
           return (
             <Link key={fp.floor.id} to={`/inspect/${fp.floor.id}`} className="card block px-4 py-3 active:bg-slate-50">
@@ -59,10 +73,12 @@ export default function InspectPage() {
               </div>
             </Link>
           )
-        })}
+              })}
+          </section>
+        ))}
       </div>
 
-      {floors?.length === 0 && (
+      {data?.floors.length === 0 && (
         <EmptyState
           title={t('common.empty')}
           hint={t('setup.floors')}

@@ -6,6 +6,7 @@ export type LabelScope = 'room' | 'floor' | 'exercise'
 export interface LabelData {
   tag: string
   description: string
+  block: string
   floor: string
   room: string
   serial: string
@@ -28,8 +29,9 @@ export async function collectLabels(opts: {
   roomId?: string
   floorId?: string
 }): Promise<LabelSheet> {
-  const [exercise, floors, rooms, assetTypes, entriesRaw, orgs] = await Promise.all([
+  const [exercise, blocks, floors, rooms, assetTypes, entriesRaw, orgs] = await Promise.all([
     db.exercises.get(opts.exerciseId),
+    db.blocks.where('exerciseId').equals(opts.exerciseId).toArray().then((rows) => rows.filter((block) => !block.deleted)),
     db.floors.where('exerciseId').equals(opts.exerciseId).toArray(),
     db.rooms.where('exerciseId').equals(opts.exerciseId).toArray(),
     db.assetTypes.toArray(),
@@ -37,6 +39,7 @@ export async function collectLabels(opts: {
     db.organizations.toArray(),
   ])
 
+  const blockById = new Map(blocks.map((b) => [b.id, b]))
   const floorById = new Map(floors.map((f) => [f.id, f]))
   const roomById = new Map(rooms.map((r) => [r.id, r]))
   const typeById = new Map(assetTypes.map((a) => [a.id, a]))
@@ -49,10 +52,11 @@ export async function collectLabels(opts: {
     return true
   })
 
-  const labels: Array<LabelData & { floorOrder: number; roomOrder: number }> = []
+  const labels: Array<LabelData & { blockOrder: number; floorOrder: number; roomOrder: number }> = []
   for (const e of inScope) {
     const room = roomById.get(e.roomId)
     const floor = room ? floorById.get(room.floorId) : undefined
+    const block = floor?.blockId ? blockById.get(floor.blockId) : undefined
     const description = e.isUnlistedItem
       ? (e.unlistedItemName ?? 'Unlisted item')
       : (typeById.get(e.assetTypeId ?? '')?.name ?? 'Asset')
@@ -60,12 +64,14 @@ export async function collectLabels(opts: {
       labels.push({
         tag,
         description,
+        block: block?.name ?? '',
         floor: floor?.name ?? '',
         room: room?.name ?? '',
         serial: e.serialNumbers[i] ?? '',
         photoCount: e.photoIds.length,
         entryId: e.id,
         condition: e.condition,
+        blockOrder: block?.sortOrder ?? Number.MAX_SAFE_INTEGER,
         floorOrder: floor?.sortOrder ?? Number.MAX_SAFE_INTEGER,
         roomOrder: room?.sortOrder ?? Number.MAX_SAFE_INTEGER,
       })
@@ -74,6 +80,7 @@ export async function collectLabels(opts: {
 
   labels.sort(
     (a, b) =>
+      a.blockOrder - b.blockOrder ||
       a.floorOrder - b.floorOrder ||
       a.roomOrder - b.roomOrder ||
       a.tag.localeCompare(b.tag),
@@ -82,7 +89,7 @@ export async function collectLabels(opts: {
   return {
     organization: org?.name ?? '',
     verifiedOn: exercise?.date ?? new Date().toISOString().slice(0, 10),
-    labels: labels.map(({ floorOrder: _floorOrder, roomOrder: _roomOrder, ...label }) => label),
+    labels: labels.map(({ blockOrder: _blockOrder, floorOrder: _floorOrder, roomOrder: _roomOrder, ...label }) => label),
   }
 }
 
@@ -131,7 +138,7 @@ export async function renderLabelsHtml(sheet: LabelSheet, origin = 'http://local
           <div class="org">${escapeHtml(sheet.organization)}</div>
           <div class="tag">${escapeHtml(l.tag)}</div>
           <div class="desc">${escapeHtml(l.description)}</div>
-          <div class="loc">${escapeHtml(l.room)}</div>
+          <div class="loc">${escapeHtml([l.block, l.floor, l.room].filter(Boolean).join(' · '))}</div>
           <div class="date">Verified ${escapeHtml(sheet.verifiedOn)}</div>
         </div>
       </div>`,
