@@ -290,7 +290,9 @@ export async function lastSyncError(): Promise<string | null> {
 }
 
 async function remember(result: SyncResult): Promise<SyncResult> {
-  await setMeta('lastSyncError', result.ok ? null : (result.error ?? 'failed'))
+  // A round can push every record and still fail to land a photo. Report the
+  // error whenever there is one, rather than letting `ok` alone clear it.
+  await setMeta('lastSyncError', result.error ?? (result.ok ? null : 'failed'))
   return result
 }
 
@@ -339,7 +341,19 @@ export async function syncNow(): Promise<SyncResult> {
       return remember({ ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: 'unauthorized' })
     }
     if (!res.ok) {
-      return { ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: `http-${res.status}` }
+      // Must go through remember(): this is the one failure the device cannot
+      // feel. A 500 from the sync function leaves the last *successful* run's
+      // cleared error in place, so the phone keeps saying everything is fine
+      // while every background round drops on the floor and the inspector's
+      // work never reaches the team.
+      return remember({
+        ok: false,
+        pushed: 0,
+        pulled: 0,
+        conflicts: 0,
+        photosUploaded: 0,
+        error: `http-${res.status}`,
+      })
     }
     payload = await res.json()
   } catch (err) {
@@ -418,7 +432,8 @@ export async function syncNow(): Promise<SyncResult> {
     }
   }
 
-  const photosUploaded = await uploadPendingPhotos(base, token)
+  const photos = await uploadPendingPhotos(base, token)
+  const photosUploaded = photos.uploaded
   const serverTime = payload.serverTime ?? Date.now()
   // Skipped records resolve on a later round: a pending one is pushed and
   // either accepted or turned into a conflict, and a conflict waits for the
@@ -428,12 +443,29 @@ export async function syncNow(): Promise<SyncResult> {
     : serverTime
   await setMeta('lastSyncAt', watermark)
 
-  return remember({ ok: true, pushed, pulled, conflicts, photosUploaded })
+  // The records round succeeded, so `ok` stays true and the caller does not
+  // escalate to a full re-pull every minute; a photo that would not land is
+  // still reported, so the lag has something on screen explaining it.
+  return remember({ ok: true, pushed, pulled, conflicts, photosUploaded, error: photos.error })
 }
 
-async function uploadPendingPhotos(base: string, token: string): Promise<number> {
+/**
+ * Uploads queued photos, one request each.
+ *
+ * Head-of-line blocking is the thing to avoid here. A single image the server
+ * will always refuse — too large for the function's body limit, or stored
+ * with a content type it rejects — used to `break` the loop on every round,
+ * so every photo queued behind it stayed on the phone for good while the
+ * records around them synced perfectly. A permanent refusal now steps over
+ * that one photo; only a transient failure stops the round.
+ */
+async function uploadPendingPhotos(
+  base: string,
+  token: string,
+): Promise<{ uploaded: number; error?: string }> {
   const pending = await db.photos.where('syncStatus').equals('pending').toArray()
   let uploaded = 0
+  let error: string | undefined
   for (const photo of pending) {
     try {
       const res = await fetch(`${base}/photos/${encodeURIComponent(photo.id)}`, {
@@ -449,15 +481,23 @@ async function uploadPendingPhotos(base: string, token: string): Promise<number>
           data: bytesToBase64(photo.data),
         }),
       })
-      if (!res.ok) break
+      if (!res.ok) {
+        error = `photo-http-${res.status}`
+        // 408 and 429 are the two 4xx that are worth waiting out; every other
+        // one means this image will be refused again however often it is sent.
+        const permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429
+        if (permanent) continue
+        break // transient: let the whole queue retry on the next round
+      }
       const { url } = (await res.json()) as { url?: string }
       await db.photos.put({ ...photo, syncStatus: 'synced', remoteUrl: url })
       uploaded += 1
     } catch {
+      error = 'photo-network'
       break // stay offline-safe: retry on the next sync
     }
   }
-  return uploaded
+  return { uploaded, error }
 }
 
 /** Wipes local data and reloads the sample exercise. */

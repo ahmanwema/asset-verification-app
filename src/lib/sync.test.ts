@@ -460,6 +460,116 @@ describe('sync failure is visible', () => {
     expect(ok.ok).toBe(true)
     expect(await lastSyncError()).toBeNull()
   })
+
+  it('reports a server error instead of leaving the last success on screen', async () => {
+    await login('admin@test.local', 'secret123')
+    await saveEntry(draft())
+
+    // A clean round first, so lastSyncError is null and only a regression
+    // could leave it that way through the failure below.
+    expect((await syncNow()).ok).toBe(true)
+    expect(await lastSyncError()).toBeNull()
+
+    await saveEntry(draft({ quantity: 4 }))
+    const real = globalThis.fetch
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = typeof input === 'string' ? input : String((input as Request).url ?? input)
+      if (url.endsWith('/sync')) return Promise.resolve(new Response('upstream down', { status: 502 }))
+      return real(input as RequestInfo, init)
+    })
+
+    try {
+      const res = await syncNow()
+      expect(res.ok).toBe(false)
+      expect(res.error).toBe('http-502')
+      expect(await lastSyncError()).toBe('http-502')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+describe('photo upload', () => {
+  async function queuePhoto(entryId: string, id: string) {
+    await db.photos.add({
+      id,
+      entryId,
+      exerciseId: fx.exercise.id,
+      data: new Uint8Array([1, 2, 3, 4]).buffer,
+      contentType: 'image/jpeg',
+      width: 100,
+      height: 80,
+      createdAt: Date.now(),
+      syncStatus: 'pending',
+    })
+  }
+
+  it('steps over a photo the server will never accept, and uploads the rest', async () => {
+    const entry = await saveEntry(draft())
+    await queuePhoto(entry.id, 'ph_rejected')
+    await queuePhoto(entry.id, 'ph_good_1')
+    await queuePhoto(entry.id, 'ph_good_2')
+
+    await login('admin@test.local', 'secret123')
+
+    const real = globalThis.fetch
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = typeof input === 'string' ? input : String((input as Request).url ?? input)
+      // Stands in for an image over the function's body limit: refused the
+      // same way every time it is offered.
+      if (url.endsWith('/photos/ph_rejected')) {
+        return Promise.resolve(new Response('too large', { status: 413 }))
+      }
+      return real(input as RequestInfo, init)
+    })
+
+    try {
+      const res = await syncNow()
+      // The two good photos queued behind the bad one still land.
+      expect(res.photosUploaded).toBe(2)
+      expect(res.error).toBe('photo-http-413')
+    } finally {
+      spy.mockRestore()
+    }
+
+    const byId = new Map((await db.photos.toArray()).map((p) => [p.id, p.syncStatus]))
+    expect(byId.get('ph_good_1')).toBe('synced')
+    expect(byId.get('ph_good_2')).toBe('synced')
+    expect(byId.get('ph_rejected')).toBe('pending')
+
+    // Records are not held back by it, and the reason is on record.
+    expect(await lastSyncError()).toBe('photo-http-413')
+  })
+
+  it('stops the round on a transient failure, so the queue is retried intact', async () => {
+    const entry = await saveEntry(draft())
+    await queuePhoto(entry.id, 'ph_a')
+    await queuePhoto(entry.id, 'ph_b')
+
+    await login('admin@test.local', 'secret123')
+
+    const real = globalThis.fetch
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = typeof input === 'string' ? input : String((input as Request).url ?? input)
+      if (url.includes('/photos/')) return Promise.resolve(new Response('later', { status: 503 }))
+      return real(input as RequestInfo, init)
+    })
+
+    try {
+      const res = await syncNow()
+      expect(res.photosUploaded).toBe(0)
+      expect(res.error).toBe('photo-http-503')
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(await db.photos.where('syncStatus').equals('pending').count()).toBe(2)
+
+    // With the server healthy again, the untouched queue drains.
+    const after = await syncNow()
+    expect(after.photosUploaded).toBe(2)
+    expect(await lastSyncError()).toBeNull()
+  })
 })
 
 describe('the sync watermark', () => {
