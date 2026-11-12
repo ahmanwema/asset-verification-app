@@ -166,6 +166,8 @@ export default function EntryPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  /** Item index a camera button aimed at, cleared once the shot is attached. */
+  const shotFor = useRef<number | null>(null)
 
   // --- "More details" + photo recognition ---------------------------------
   const [showDetails, setShowDetails] = useState(false)
@@ -358,9 +360,30 @@ export default function EntryPage() {
   }
 
   function photoAssignment(): { itemIndexes: number[]; representative: boolean } {
+    // A shot started from one item's own camera button belongs to that item,
+    // whatever the controls at the top of the page happen to be set to. Two
+    // buses of the same type but different makes are one entry, and each
+    // needs its own picture.
+    const target = shotFor.current
+    if (target !== null && target < quantity) return { itemIndexes: [target], representative: false }
     if (photoMode === 'item') return { itemIndexes: [sourceUnit], representative: false }
     const selected = [...selectedUnits].filter((index) => index < quantity)
     return { itemIndexes: selected.length > 0 ? selected : [sourceUnit], representative: true }
+  }
+
+  /**
+   * Opens the camera with one item already chosen as the destination.
+   *
+   * The picker is opened from the hidden input the page already owns, so
+   * there is one camera path rather than one per card. The target is held in
+   * a ref because the file dialog resolves long after this handler returns,
+   * and a ref cannot be stale the way the captured state would be.
+   */
+  function capturePhotoFor(index: number) {
+    shotFor.current = index
+    setSourceUnit(index)
+    setPhotoMode('item')
+    fileRef.current?.click()
   }
 
   function applyUnitDetails(includeModel: boolean) {
@@ -388,6 +411,7 @@ export default function EntryPage() {
       flash(t('entry.photo'))
     } finally {
       setBusy(false)
+      shotFor.current = null
       if (fileRef.current) fileRef.current.value = ''
     }
   }
@@ -527,6 +551,7 @@ export default function EntryPage() {
       flash(t('ai.failed'))
     } finally {
       setIdentifying(false)
+      shotFor.current = null
       if (aiFileRef.current) aiFileRef.current.value = ''
       if (aiUploadRef.current) aiUploadRef.current.value = ''
     }
@@ -755,7 +780,12 @@ export default function EntryPage() {
               ))}
               <button
                 type="button"
-                onClick={() => fileRef.current?.click()}
+                onClick={() => {
+                  // Clear any target left behind by a card camera the
+                  // inspector opened and then cancelled.
+                  shotFor.current = null
+                  fileRef.current?.click()
+                }}
                 className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-slate-300 text-[10px] font-semibold text-slate-500"
               >
                 <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
@@ -766,7 +796,10 @@ export default function EntryPage() {
               </button>
               <button
                 type="button"
-                onClick={() => uploadRef.current?.click()}
+                onClick={() => {
+                  shotFor.current = null
+                  uploadRef.current?.click()
+                }}
                 className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-slate-300 text-[10px] font-semibold text-slate-500"
               >
                 <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1239,7 +1272,10 @@ export default function EntryPage() {
                 const itemPhotos = photos.filter((photo) => photo.itemIndexes.includes(index))
                 return (
                   <div key={index} className={`rounded-xl border p-3 ${sourceUnit === index ? 'border-brand-300 bg-brand-50/30' : 'border-slate-200'}`}>
-                    <div className="mb-2 flex items-center gap-2">
+                    {/* Wraps rather than overflows: a long tag like
+                        SCB-PA-GRO-A-002 and a shutter button do not both fit
+                        on one line on a narrow phone. */}
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
                       {quantity > 1 && (
                         <input
                           type="checkbox"
@@ -1259,6 +1295,25 @@ export default function EntryPage() {
                         </span>
                       </button>
                       {itemPhotos.length > 0 && <span className="text-xs font-semibold text-brand-700">📷 {itemPhotos.length}</span>}
+                      {/* Each item gets its own shutter. Same type, different
+                          make — two school buses, a Toyota and an Eicher — is
+                          one entry whose items do not look alike, and the
+                          controls at the top of the page are far out of sight
+                          by the time the second card is on screen. */}
+                      <button
+                        type="button"
+                        onClick={() => capturePhotoFor(index)}
+                        disabled={busy || identifying}
+                        aria-label={t('entry.photoForItem', { n: index + 1 })}
+                        title={t('entry.photoForItem', { n: index + 1 })}
+                        className="flex shrink-0 items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2 py-1 text-[11px] font-bold text-brand-700 disabled:opacity-50"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M3 8l2-3h6l2 3h5a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V8z" strokeLinejoin="round" />
+                          <circle cx="11.5" cy="13" r="3.5" />
+                        </svg>
+                        {t('entry.takePhoto')}
+                      </button>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <Field label={t('entry.brand')}>

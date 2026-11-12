@@ -274,6 +274,51 @@ describe('more details', () => {
   })
 })
 
+describe('photographing items of one type that do not look alike', () => {
+  /**
+   * Two school buses are one entry — same asset type, same room — but one is
+   * a Toyota and the other an Eicher, so one picture cannot stand for both.
+   * The shutter on each item's own card has to attach to that item.
+   */
+  it('attaches the shot to the item whose own camera button opened it', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+
+    const qty = await screen.findByDisplayValue('1')
+    fireEvent.change(qty, { target: { value: '2' } })
+
+    // Every item card carries its own shutter, named for the item it serves.
+    expect(await screen.findByLabelText('Photo for item 1')).toBeTruthy()
+    fireEvent.click(await screen.findByLabelText('Photo for item 2'))
+
+    // It opens the page's single camera input: `multiple` tells it apart from
+    // the one behind "Capture & identify".
+    const camera = document.querySelector(
+      'input[capture="environment"][multiple]',
+    ) as HTMLInputElement
+    fireEvent.change(camera, {
+      target: { files: [new File([new Uint8Array([1, 2, 3])], 'eicher.jpg', { type: 'image/jpeg' })] },
+    })
+
+    // The count appears on the second card only, which is the visible proof
+    // that the shot was filed against that item and not the first one.
+    const secondCard = (await screen.findByLabelText('Photo for item 2')).closest('div') as HTMLElement
+    expect(await within(secondCard).findByText('📷 1')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(async () => {
+      const [entry] = await db.entries.toArray()
+      expect(entry.itemDetails?.[0]?.photoIds).toEqual([])
+      expect(entry.itemDetails?.[1]?.photoIds).toHaveLength(1)
+      // It is the second item's own picture, not a shared one.
+      expect(entry.itemDetails?.[1]?.representativePhotoIds).toEqual([])
+    })
+  })
+})
+
 describe('capture & identify', () => {
   const photo = () => new File([new Uint8Array([1, 2, 3])], 'item.jpg', { type: 'image/jpeg' })
 
