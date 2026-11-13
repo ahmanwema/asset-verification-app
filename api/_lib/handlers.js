@@ -184,7 +184,14 @@ export async function authenticate(store, token) {
  * push a cached Loyola exercise while authenticated as Sufa; without this
  * check that foreign JSON would still live inside Sufa's partition.
  */
-async function recordBelongsToOrganization(store, orgId, tableName, row, invalidExerciseIds = new Set()) {
+async function recordBelongsToOrganization(
+  store,
+  orgId,
+  tableName,
+  row,
+  invalidExerciseIds = new Set(),
+  exerciseCache = null,
+) {
   if (!row || typeof row !== 'object') return false
   if (tableName === 'organizations') return String(row.id || '') === orgId
   if (tableName === 'exercises' || tableName === 'assetTypes') return String(row.orgId || '') === orgId
@@ -195,7 +202,16 @@ async function recordBelongsToOrganization(store, orgId, tableName, row, invalid
 
   const exerciseId = String(row.exerciseId || '')
   if (!exerciseId || invalidExerciseIds.has(exerciseId)) return false
-  const exercise = await store.recordFor(orgId, 'exercises', exerciseId)
+  // A push is hundreds of rows of one exercise, so looking it up per row is
+  // hundreds of needless round trips against the thirty-second function
+  // budget - the very budget a large backlog was already overrunning.
+  let exercise
+  if (exerciseCache?.has(exerciseId)) {
+    exercise = exerciseCache.get(exerciseId)
+  } else {
+    exercise = await store.recordFor(orgId, 'exercises', exerciseId)
+    exerciseCache?.set(exerciseId, exercise)
+  }
   // Legacy/on-site imports can contain child rows without a mirrored exercise.
   // They are retained for compatibility; a known parent must always match.
   return !exercise || String(exercise.json?.orgId || '') === orgId
@@ -213,6 +229,8 @@ export async function handleSync(store, user, body) {
   const accepted = {}
   const conflicts = []
   const pushedIds = {}
+  /** Exercise rows looked up while serving this one request. */
+  const exerciseCache = new Map()
   const invalidExerciseIds = new Set(
     (Array.isArray(changes.exercises) ? changes.exercises : [])
       .filter((row) => row && typeof row === 'object' && String(row.orgId || '') !== orgId)
@@ -231,7 +249,8 @@ export async function handleSync(store, user, body) {
         if (asUser) await store.upsertUser(orgId, asUser)
       }
 
-      if (!(await recordBelongsToOrganization(store, orgId, tableName, row, invalidExerciseIds))) continue
+      if (!(await recordBelongsToOrganization(store, orgId, tableName, row, invalidExerciseIds, exerciseCache)))
+        continue
 
       const existing = await store.recordFor(orgId, tableName, String(row.id || ''))
       const decision = decideRecord({ tableName, incoming: row, existing, since, actorId: user.id })
@@ -239,6 +258,9 @@ export async function handleSync(store, user, body) {
       pushedIds[tableName].add(String(row.id))
       if (decision.action === 'write') {
         await store.writeRecord(orgId, tableName, decision.row)
+        // An exercise created in this same request must be visible to the
+        // rows that hang off it, not read as missing from a stale cache.
+        if (tableName === 'exercises') exerciseCache.set(String(row.id), decision.row)
         accepted[tableName].push(String(row.id))
       } else if (decision.action === 'conflict') {
         conflicts.push({ table: tableName, id: String(row.id), server: existing.json })
@@ -246,12 +268,19 @@ export async function handleSync(store, user, body) {
     }
   }
 
+  // A client with a large backlog splits its push across several requests and
+  // asks for the changeset only on the last one, rather than dragging the
+  // whole of it down the wire once per batch. Absent flag means pull, so an
+  // older client keeps its single-request behaviour.
   const out = {}
-  for (const record of await store.recordsSince(orgId, since)) {
-    if (!SYNC_TABLES.has(record.tableName)) continue
-    if (pushedIds[record.tableName]?.has(record.id)) continue
-    if (!(await recordBelongsToOrganization(store, orgId, record.tableName, record.json))) continue
-    ;(out[record.tableName] ||= []).push(record.json)
+  if (body?.pull !== false) {
+    for (const record of await store.recordsSince(orgId, since)) {
+      if (!SYNC_TABLES.has(record.tableName)) continue
+      if (pushedIds[record.tableName]?.has(record.id)) continue
+      if (!(await recordBelongsToOrganization(store, orgId, record.tableName, record.json, undefined, exerciseCache)))
+        continue
+      ;(out[record.tableName] ||= []).push(record.json)
+    }
   }
 
   return { status: 200, body: { serverTime: Date.now(), accepted, conflicts, changes: out } }

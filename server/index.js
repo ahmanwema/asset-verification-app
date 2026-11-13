@@ -205,12 +205,16 @@ function handleSync(user, body) {
   }
 
   // Everything the client has not seen yet, minus what it just sent us.
+  // A client splitting a large backlog across several requests asks for this
+  // on the last one only; an older client sends no flag and still gets it.
   const out = {}
-  const rows = db.prepare('SELECT * FROM records WHERE updated_at > ? ORDER BY updated_at ASC').all(since)
-  for (const row of rows) {
-    if (!SYNC_TABLES.has(row.table_name)) continue
-    if (pushedIds[row.table_name]?.has(row.id)) continue
-    ;(out[row.table_name] ||= []).push(recordOf(row))
+  if (body.pull !== false) {
+    const rows = db.prepare('SELECT * FROM records WHERE updated_at > ? ORDER BY updated_at ASC').all(since)
+    for (const row of rows) {
+      if (!SYNC_TABLES.has(row.table_name)) continue
+      if (pushedIds[row.table_name]?.has(row.id)) continue
+      ;(out[row.table_name] ||= []).push(recordOf(row))
+    }
   }
 
   return { serverTime: Date.now(), accepted, conflicts, changes: out }

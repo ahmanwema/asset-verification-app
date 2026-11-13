@@ -296,79 +296,82 @@ async function remember(result: SyncResult): Promise<SyncResult> {
   return result
 }
 
-export async function syncNow(): Promise<SyncResult> {
-  const base = await getServerUrl()
-  const token = await getToken()
-  if (!token) {
-    return remember({ ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: 'not-connected' })
-  }
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    return remember({ ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: 'offline' })
+interface SyncPayload {
+  serverTime: number
+  changes: Partial<Record<SyncTable, AnyRecord[]>>
+  conflicts: Array<{ table: SyncTable; id: string; server: AnyRecord }>
+  accepted: Partial<Record<SyncTable, string[]>>
+}
+
+/**
+ * How much of the backlog one request may carry.
+ *
+ * The hosted deployment sits behind a serverless gateway that refuses a body
+ * over about 4.5 MB outright, and allows the function thirty seconds, while
+ * the server spends two queries on every record it is handed. A device that
+ * worked offline for a day therefore builds a push that cannot succeed — and
+ * because a refused push accepts nothing, the next round rebuilds the very
+ * same oversized body and is refused again. The backlog only ever grows, and
+ * the team sees none of that inspector's work.
+ *
+ * Splitting it turns that deadlock into progress. Whatever goes wrong, each
+ * round lands at most one batch, and what lands stays landed.
+ */
+// Sized for the slower of the two limits. The server spends a small number of
+// queries on each record it is handed, so the thirty-second budget binds well
+// before the body size does; fifty records leaves generous margin on a field
+// connection, and a backlog that needs many rounds still drains, because
+// every round that completes keeps its batch.
+const PUSH_MAX_RECORDS = 50
+const PUSH_MAX_BYTES = 750_000
+
+interface PushRound {
+  changes: Partial<Record<SyncTable, AnyRecord[]>>
+  count: number
+}
+
+/** Groups the outbox into requests. Always returns at least one round, because
+ *  the last one carries the pull even when there is nothing to send. */
+function splitPush(outbox: Array<{ table: SyncTable; row: AnyRecord }>): PushRound[] {
+  const rounds: PushRound[] = []
+  let current: PushRound = { changes: {}, count: 0 }
+  let bytes = 0
+
+  for (const { table, row } of outbox) {
+    const size = JSON.stringify(row).length
+    // A single record over the cap still has to travel; it just travels alone.
+    if (current.count > 0 && (current.count >= PUSH_MAX_RECORDS || bytes + size > PUSH_MAX_BYTES)) {
+      rounds.push(current)
+      current = { changes: {}, count: 0 }
+      bytes = 0
+    }
+    ;(current.changes[table] ??= []).push(row)
+    current.count += 1
+    bytes += size
   }
 
-  const since = await getMeta<number>('lastSyncAt', 0)
-  const activeOrgId = await getMeta<string | null>(ACTIVE_ORG_KEY, null)
-  const changes: Partial<Record<SyncTable, AnyRecord[]>> = {}
-  let pushed = 0
+  if (current.count > 0) rounds.push(current)
+  return rounds.length > 0 ? rounds : [{ changes: {}, count: 0 }]
+}
 
-  for (const t of SYNC_TABLES) {
-    const pending = await tableFor(t).where('syncStatus').equals('pending').toArray()
-    const owned: AnyRecord[] = []
-    for (const row of pending) {
-      if (!activeOrgId || (await belongsToActiveOrganization(t, row, activeOrgId))) owned.push(row)
-    }
-    if (owned.length > 0) {
-      changes[t] = owned.map((r) => stripForPush(t, r))
-      pushed += owned.length
-    }
-  }
-
-  let payload: {
-    serverTime: number
-    changes: Partial<Record<SyncTable, AnyRecord[]>>
-    conflicts: Array<{ table: SyncTable; id: string; server: AnyRecord }>
-    accepted: Partial<Record<SyncTable, string[]>>
-  }
-
-  try {
-    const res = await fetch(`${base}/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ since, changes }),
-    })
-    if (res.status === 401) {
-      await setMeta('syncToken', null)
-      return remember({ ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: 'unauthorized' })
-    }
-    if (!res.ok) {
-      // Must go through remember(): this is the one failure the device cannot
-      // feel. A 500 from the sync function leaves the last *successful* run's
-      // cleared error in place, so the phone keeps saying everything is fine
-      // while every background round drops on the floor and the inspector's
-      // work never reaches the team.
-      return remember({
-        ok: false,
-        pushed: 0,
-        pulled: 0,
-        conflicts: 0,
-        photosUploaded: 0,
-        error: `http-${res.status}`,
-      })
-    }
-    payload = await res.json()
-  } catch (err) {
-    return remember({
-      ok: false,
-      pushed: 0,
-      pulled: 0,
-      conflicts: 0,
-      photosUploaded: 0,
-      error: err instanceof Error ? err.message : 'network',
-    })
+/**
+ * Files one round's answer: accepted pushes become synced, conflicts are kept
+ * for the inspector to resolve, and every id the server ruled on is recorded
+ * so the pull at the end of the round does not re-apply it.
+ */
+async function applyPushResult(
+  body: SyncPayload,
+  activeOrgId: string | null,
+  settledIds: Map<SyncTable, Set<string>>,
+): Promise<number> {
+  const remember_ = (table: SyncTable, id: string) => {
+    const seen = settledIds.get(table) ?? new Set<string>()
+    seen.add(id)
+    settledIds.set(table, seen)
   }
 
   const conflictIds = new Map<SyncTable, Set<string>>()
-  for (const c of payload.conflicts ?? []) {
+  for (const c of body.conflicts ?? []) {
     const set = conflictIds.get(c.table) ?? new Set<string>()
     set.add(c.id)
     conflictIds.set(c.table, set)
@@ -376,8 +379,8 @@ export async function syncNow(): Promise<SyncResult> {
 
   // Mark accepted pushes as synced.
   for (const t of SYNC_TABLES) {
-    const ids = payload.accepted?.[t] ?? []
-    for (const id of ids) {
+    for (const id of body.accepted?.[t] ?? []) {
+      remember_(t, id)
       if (conflictIds.get(t)?.has(id)) continue
       const local = await tableFor(t).get(id)
       if (local) await tableFor(t).put({ ...local, syncStatus: 'synced' })
@@ -386,7 +389,8 @@ export async function syncNow(): Promise<SyncResult> {
 
   // Store conflicts on the local entry so the UI can offer mine/theirs.
   let conflicts = 0
-  for (const c of payload.conflicts ?? []) {
+  for (const c of body.conflicts ?? []) {
+    remember_(c.table, c.id)
     if (activeOrgId && !(await belongsToActiveOrganization(c.table, c.server, activeOrgId))) continue
     if (c.table !== 'entries') {
       // Non-entry tables are setup data: the server copy wins.
@@ -405,13 +409,104 @@ export async function syncNow(): Promise<SyncResult> {
     })
     conflicts += 1
   }
+  return conflicts
+}
+
+export async function syncNow(): Promise<SyncResult> {
+  const base = await getServerUrl()
+  const token = await getToken()
+  if (!token) {
+    return remember({ ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: 'not-connected' })
+  }
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return remember({ ok: false, pushed: 0, pulled: 0, conflicts: 0, photosUploaded: 0, error: 'offline' })
+  }
+
+  const since = await getMeta<number>('lastSyncAt', 0)
+  const activeOrgId = await getMeta<string | null>(ACTIVE_ORG_KEY, null)
+
+  const outbox: Array<{ table: SyncTable; row: AnyRecord }> = []
+  for (const t of SYNC_TABLES) {
+    const pending = await tableFor(t).where('syncStatus').equals('pending').toArray()
+    for (const row of pending) {
+      if (!activeOrgId || (await belongsToActiveOrganization(t, row, activeOrgId))) {
+        outbox.push({ table: t, row: stripForPush(t, row) })
+      }
+    }
+  }
+
+  const rounds = splitPush(outbox)
+  const settledIds = new Map<SyncTable, Set<string>>()
+  let pushed = 0
+  let conflicts = 0
+  let payload: SyncPayload | null = null
+
+  for (let i = 0; i < rounds.length; i += 1) {
+    const round = rounds[i]
+    // Only the final request pulls. The ones before it are pure uploads, so a
+    // long backlog does not drag the whole server-side changeset down the
+    // wire once per batch.
+    const pull = i === rounds.length - 1
+    let body: SyncPayload
+
+    try {
+      const res = await fetch(`${base}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ since, changes: round.changes, pull }),
+      })
+      if (res.status === 401) {
+        await setMeta('syncToken', null)
+        return remember({ ok: false, pushed, pulled: 0, conflicts, photosUploaded: 0, error: 'unauthorized' })
+      }
+      if (!res.ok) {
+        // Batches that already landed keep their accepted status - that is
+        // the point of splitting the push. The watermark is left where it
+        // was, because this round never got as far as pulling.
+        //
+        // remember() matters here: a 500 used to leave the last successful
+        // run's cleared error in place, so the phone went on claiming a
+        // healthy connection while every round dropped on the floor.
+        return remember({
+          ok: false,
+          pushed,
+          pulled: 0,
+          conflicts,
+          photosUploaded: 0,
+          error: `http-${res.status}`,
+        })
+      }
+      body = await res.json()
+    } catch (err) {
+      return remember({
+        ok: false,
+        pushed,
+        pulled: 0,
+        conflicts,
+        photosUploaded: 0,
+        error: err instanceof Error ? err.message : 'network',
+      })
+    }
+
+    conflicts += await applyPushResult(body, activeOrgId, settledIds)
+    pushed += round.count
+    if (pull) payload = body
+  }
+
+  // splitPush always yields a final, pulling round, so this is never null.
+  const settled: SyncPayload = payload ?? { serverTime: Date.now(), changes: {}, conflicts: [], accepted: {} }
 
   // Apply server changes, never clobbering a record we still hold unsynced.
   let pulled = 0
   let earliestSkipped = Number.POSITIVE_INFINITY
   for (const t of SYNC_TABLES) {
-    const rows = payload.changes?.[t] ?? []
+    const rows = settled.changes?.[t] ?? []
     for (const row of rows) {
+      // An earlier batch in this same round already settled this record, as
+      // an accepted push or as a conflict. The server only omits what it was
+      // handed in the one request, so re-applying it here would undo a
+      // conflict the inspector has yet to see.
+      if (settledIds.get(t)?.has(String(row.id))) continue
       if (activeOrgId && !(await belongsToActiveOrganization(t, row, activeOrgId))) continue
       const local = await tableFor(t).get(row.id)
       if (local && (local.syncStatus === 'pending' || local.syncStatus === 'conflict')) {
@@ -434,7 +529,7 @@ export async function syncNow(): Promise<SyncResult> {
 
   const photos = await uploadPendingPhotos(base, token)
   const photosUploaded = photos.uploaded
-  const serverTime = payload.serverTime ?? Date.now()
+  const serverTime = settled.serverTime ?? Date.now()
   // Skipped records resolve on a later round: a pending one is pushed and
   // either accepted or turned into a conflict, and a conflict waits for the
   // inspector. Re-asking for them until then costs one small response.

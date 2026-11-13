@@ -572,6 +572,88 @@ describe('photo upload', () => {
   })
 })
 
+describe('a backlog too large for one request', () => {
+  /**
+   * A device that worked offline for a day holds hundreds of pending records.
+   * Sent as one body they exceed what the hosted gateway accepts, nothing is
+   * accepted, and the next round rebuilds the identical oversized body — the
+   * backlog grows and the team never sees that inspector's work.
+   */
+  async function queueBacklog(n: number) {
+    const seed = await saveEntry(draft())
+    const base = await db.entries.get(seed.id)
+    await db.entries.bulkPut(
+      Array.from({ length: n }, (_, i) => ({
+        ...base!,
+        id: `ent_bulk_${i}`,
+        tagNumbers: [`BULK-${String(i).padStart(4, '0')}`],
+        syncStatus: 'pending' as const,
+      })),
+    )
+  }
+
+  function countSyncCalls(onCall?: (n: number) => Response | undefined) {
+    const real = globalThis.fetch
+    let calls = 0
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = typeof input === 'string' ? input : String((input as Request).url ?? input)
+      if (url.endsWith('/sync')) {
+        calls += 1
+        const stub = onCall?.(calls)
+        if (stub) return Promise.resolve(stub)
+      }
+      return real(input as RequestInfo, init)
+    })
+    return { spy, calls: () => calls }
+  }
+
+  it('drains it over several requests instead of refusing it whole', async () => {
+    await login('admin@test.local', 'secret123')
+    await queueBacklog(140)
+
+    const { spy, calls } = countSyncCalls()
+    try {
+      const res = await syncNow()
+      expect(res.ok).toBe(true)
+      // More than one request, so no single body carries the whole backlog.
+      expect(calls()).toBeGreaterThan(1)
+      expect(res.pushed).toBeGreaterThanOrEqual(141)
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(await db.entries.where('syncStatus').equals('pending').count()).toBe(0)
+  })
+
+  it('keeps the batches that landed when a later one fails', async () => {
+    await login('admin@test.local', 'secret123')
+    await queueBacklog(140)
+    const total = await db.entries.where('syncStatus').equals('pending').count()
+
+    const { spy } = countSyncCalls((n) =>
+      n === 2 ? new Response('gateway timeout', { status: 504 }) : undefined,
+    )
+    try {
+      const res = await syncNow()
+      expect(res.ok).toBe(false)
+      expect(res.error).toBe('http-504')
+    } finally {
+      spy.mockRestore()
+    }
+
+    // The first batch is on the server for good: the round made progress
+    // rather than throwing the whole push away, which is what turned a big
+    // backlog into a permanent deadlock.
+    const stillPending = await db.entries.where('syncStatus').equals('pending').count()
+    expect(stillPending).toBeGreaterThan(0)
+    expect(stillPending).toBeLessThan(total)
+
+    // And the next round clears the rest.
+    expect((await syncNow()).ok).toBe(true)
+    expect(await db.entries.where('syncStatus').equals('pending').count()).toBe(0)
+  })
+})
+
 describe('the sync watermark', () => {
   it('re-offers a record that was skipped, instead of losing it for ever', async () => {
     await login('admin@test.local', 'secret123')
