@@ -5,7 +5,7 @@ import { db } from '../db/db'
 import { assetName, useI18n, useT } from '../i18n'
 import { useSession } from '../state/session'
 import { entryConditionCounts } from '../lib/queries'
-import { markNotPresent, reopenRoom, signoffRoom } from '../lib/entries'
+import { MoveEntriesError, markNotPresent, moveEntriesToRoom, reopenRoom, signoffRoom } from '../lib/entries'
 import { printLabels, collectLabels } from '../lib/labels'
 import {
   Button,
@@ -15,6 +15,7 @@ import {
   Field,
   ProgressBar,
   SectionTitle,
+  Select,
   Sheet,
   TextArea,
   TextInput,
@@ -33,24 +34,35 @@ export default function RoomPage() {
   const [signNotes, setSignNotes] = useState('')
   const [busy, setBusy] = useState(false)
   const [assetSearch, setAssetSearch] = useState('')
+  const [moveSheet, setMoveSheet] = useState(false)
+  const [moveEntryIds, setMoveEntryIds] = useState<Set<string>>(new Set())
+  const [moveTargetRoomId, setMoveTargetRoomId] = useState('')
+  const [moveError, setMoveError] = useState<string | null>(null)
 
   const data = useLiveQuery(async () => {
     const room = await db.rooms.get(roomId)
     if (!room) return null
-    const [floor, assetTypes, entries, signoff, inspectors] = await Promise.all([
+    const [floor, allAssetTypes, entries, signoff, inspectors, rooms, floors, blocks] = await Promise.all([
       db.floors.get(room.floorId),
       db.assetTypes.orderBy('sortOrder').toArray(),
       db.entries.where('roomId').equals(roomId).toArray(),
       db.signoffs.where('roomId').equals(roomId).first(),
       db.inspectors.toArray(),
+      db.rooms.where('exerciseId').equals(room.exerciseId).toArray(),
+      db.floors.where('exerciseId').equals(room.exerciseId).toArray(),
+      db.blocks.where('exerciseId').equals(room.exerciseId).toArray(),
     ])
     return {
       room,
       floor,
-      assetTypes: assetTypes.filter((a) => a.active),
+      assetTypes: allAssetTypes.filter((a) => a.active),
+      allAssetTypes,
       entries: entries.filter((e) => !e.deleted),
       signoff: signoff && !signoff.deleted ? signoff : undefined,
       inspectors,
+      rooms,
+      floors,
+      blocks: blocks.filter((block) => !block.deleted),
     }
   }, [roomId])
 
@@ -62,7 +74,7 @@ export default function RoomPage() {
   if (data === undefined) return <p className="text-sm text-slate-500">{t('common.loading')}</p>
   if (data === null) return <EmptyState title={t('common.empty')} />
 
-  const { room, floor, assetTypes, entries, signoff, inspectors } = data
+  const { room, floor, assetTypes, allAssetTypes, entries, signoff, inspectors, rooms, floors, blocks } = data
   const byType = new Map(entries.filter((e) => !e.isUnlistedItem).map((e) => [e.assetTypeId, e]))
   const unlisted = entries.filter((e) => e.isUnlistedItem)
   const checked = byType.size
@@ -78,6 +90,72 @@ export default function RoomPage() {
   })
   const effectiveBlockId = room.blockId ?? floor?.blockId
   const floorRoute = `/inspect/${room.floorId}?block=${encodeURIComponent(effectiveBlockId || 'unassigned')}`
+  const assetTypeById = new Map(allAssetTypes.map((assetType) => [assetType.id, assetType]))
+  const floorById = new Map(floors.map((candidate) => [candidate.id, candidate]))
+  const blockById = new Map(blocks.map((candidate) => [candidate.id, candidate]))
+  const entryLabel = (entry: InspectionEntry) => {
+    if (entry.isUnlistedItem) return entry.unlistedItemName ?? t('entry.unlisted')
+    const assetType = entry.assetTypeId ? assetTypeById.get(entry.assetTypeId) : undefined
+    return assetType ? assetName(lang, assetType.name, assetType.nameSw) : t('entry.assetType')
+  }
+  const moveCandidates = [...entries].sort((a, b) => entryLabel(a).localeCompare(entryLabel(b)))
+  const targetRooms = rooms
+    .filter((candidate) => candidate.id !== room.id)
+    .sort((a, b) => {
+      const floorA = floorById.get(a.floorId)
+      const floorB = floorById.get(b.floorId)
+      const blockA = blockById.get(a.blockId ?? floorA?.blockId ?? '')
+      const blockB = blockById.get(b.blockId ?? floorB?.blockId ?? '')
+      return (
+        (blockA?.sortOrder ?? Number.MAX_SAFE_INTEGER) - (blockB?.sortOrder ?? Number.MAX_SAFE_INTEGER) ||
+        (floorA?.sortOrder ?? Number.MAX_SAFE_INTEGER) - (floorB?.sortOrder ?? Number.MAX_SAFE_INTEGER) ||
+        a.sortOrder - b.sortOrder
+      )
+    })
+  const selectedMoveEntries = moveCandidates.filter((entry) => moveEntryIds.has(entry.id))
+  const selectedMoveItems = selectedMoveEntries.reduce(
+    (sum, entry) => sum + (entry.notPresent ? 0 : entry.quantity),
+    0,
+  )
+
+  function targetRoomLabel(target: typeof room): string {
+    const targetFloor = floorById.get(target.floorId)
+    const targetBlock = blockById.get(target.blockId ?? targetFloor?.blockId ?? '')
+    return [targetBlock?.name, targetFloor?.name, target.name].filter(Boolean).join(' · ')
+  }
+
+  function openMoveItems() {
+    setMoveEntryIds(new Set())
+    setMoveTargetRoomId('')
+    setMoveError(null)
+    setMoveSheet(true)
+  }
+
+  async function doMoveItems() {
+    if (!inspector || !moveTargetRoomId || moveEntryIds.size === 0) return
+    setBusy(true)
+    setMoveError(null)
+    try {
+      const result = await moveEntriesToRoom({
+        sourceRoomId: room.id,
+        targetRoomId: moveTargetRoomId,
+        entryIds: [...moveEntryIds],
+        actorId: inspector.id,
+      })
+      setMoveSheet(false)
+      setMoveEntryIds(new Set())
+      setMoveTargetRoomId('')
+      flash(t('room.moveSuccess', { cards: result.movedCards, items: result.movedItems }))
+    } catch (error) {
+      if (error instanceof MoveEntriesError && error.code === 'destination-conflict') {
+        setMoveError(t('room.moveConflict'))
+      } else {
+        setMoveError(t('room.moveFailed'))
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function quickNotPresent(assetTypeId: string) {
     if (!exercise || !inspector || !floor) return
@@ -217,6 +295,12 @@ export default function RoomPage() {
       )}
 
       <div className="space-y-2 pt-2">
+        {inspector?.role === 'admin' && entries.length > 0 && (
+          <Button variant="secondary" full onClick={openMoveItems} disabled={busy}>
+            {t('room.moveItems')}
+          </Button>
+        )}
+
         <Button variant="secondary" full onClick={() => void printRoomLabels()}>
           {t('labels.print')} — {t('labels.room')}
         </Button>
@@ -231,6 +315,116 @@ export default function RoomPage() {
           </Button>
         )}
       </div>
+
+      <Sheet open={moveSheet} onClose={() => setMoveSheet(false)} title={t('room.moveItems')}>
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">{t('room.moveItemsHint')}</p>
+
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-semibold text-slate-500">
+              {t('room.moveSelectionCount', { selected: moveEntryIds.size, total: moveCandidates.length })}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setMoveEntryIds(
+                  moveEntryIds.size === moveCandidates.length
+                    ? new Set()
+                    : new Set(moveCandidates.map((entry) => entry.id)),
+                )
+                setMoveError(null)
+              }}
+              className="text-xs font-bold text-brand-700"
+            >
+              {moveEntryIds.size === moveCandidates.length ? t('room.clearSelection') : t('room.selectAllItems')}
+            </button>
+          </div>
+
+          <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+            {moveCandidates.map((entry) => {
+              const checkedForMove = moveEntryIds.has(entry.id)
+              const label = entryLabel(entry)
+              return (
+                <label
+                  key={entry.id}
+                  className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 ${
+                    checkedForMove ? 'border-brand-500 bg-brand-50' : 'border-slate-200 bg-white'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checkedForMove}
+                    onChange={() => {
+                      setMoveEntryIds((current) => {
+                        const next = new Set(current)
+                        if (next.has(entry.id)) next.delete(entry.id)
+                        else next.add(entry.id)
+                        return next
+                      })
+                      setMoveError(null)
+                    }}
+                    className="h-5 w-5 shrink-0 accent-brand-700"
+                    aria-label={t('room.selectMoveItem', { item: label })}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-slate-900">{label}</span>
+                    <span className="text-xs text-slate-500">
+                      {entry.notPresent ? t('entry.notPresent') : t('room.moveQuantity', { n: entry.quantity })}
+                    </span>
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+
+          <Field label={t('room.moveDestination')}>
+            <Select
+              value={moveTargetRoomId}
+              onChange={(event) => {
+                setMoveTargetRoomId(event.target.value)
+                setMoveError(null)
+              }}
+            >
+              <option value="">{t('room.chooseDestination')}</option>
+              {targetRooms.map((target) => (
+                <option key={target.id} value={target.id}>
+                  {targetRoomLabel(target)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          {moveEntryIds.size > 0 && (
+            <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+              <p className="font-semibold text-slate-800">
+                {t('room.moveSummary', { cards: moveEntryIds.size, items: selectedMoveItems })}
+              </p>
+              <p className="mt-1">{t('room.moveKeepsData')}</p>
+            </div>
+          )}
+
+          {moveError && (
+            <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-700">
+              {moveError}
+            </p>
+          )}
+
+          <div className="flex gap-2">
+            <Button variant="secondary" full onClick={() => setMoveSheet(false)} disabled={busy}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              full
+              onClick={() => void doMoveItems()}
+              disabled={busy || moveEntryIds.size === 0 || !moveTargetRoomId}
+            >
+              {moveEntryIds.size === moveCandidates.length
+                ? t('room.moveAllItems')
+                : t('room.moveSelectedItems', { n: moveEntryIds.size })}
+            </Button>
+          </div>
+        </div>
+      </Sheet>
 
       <Sheet open={signSheet} onClose={() => setSignSheet(false)} title={t('room.signoff')}>
         <div className="space-y-3">

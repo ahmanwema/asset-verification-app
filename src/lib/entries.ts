@@ -97,6 +97,7 @@ export const EDIT_FIELD_LABEL: Record<string, string> = Object.fromEntries(
   TRACKED_FIELDS.map((f) => [f.field, f.label]),
 )
 EDIT_FIELD_LABEL.financialDetails = 'Financial details'
+EDIT_FIELD_LABEL.room = 'Room'
 
 /**
  * Hard cap on retained records. The whole entry travels to the server as one
@@ -342,6 +343,101 @@ export async function reopenRoom(roomId: string): Promise<void> {
   const existing = await db.signoffs.where('roomId').equals(roomId).first()
   if (!existing) return
   await db.signoffs.put({ ...existing, deleted: true, updatedAt: Date.now(), syncStatus: 'pending' })
+}
+
+export type MoveEntriesErrorCode =
+  | 'no-selection'
+  | 'same-room'
+  | 'room-not-found'
+  | 'wrong-source'
+  | 'destination-conflict'
+
+export class MoveEntriesError extends Error {
+  constructor(readonly code: MoveEntriesErrorCode) {
+    super(code)
+  }
+}
+
+/**
+ * Moves complete inspection cards between rooms without changing tag identity.
+ *
+ * A card can represent several physical units, so moving a selected card keeps
+ * its quantity, per-item details, photos, serials, financial records and tag
+ * numbers together. Existing labels may already be attached to assets; a room
+ * correction must never silently issue replacement identities.
+ */
+export async function moveEntriesToRoom(opts: {
+  sourceRoomId: string
+  targetRoomId: string
+  entryIds: string[]
+  actorId: string
+}): Promise<{ movedCards: number; movedItems: number }> {
+  const entryIds = [...new Set(opts.entryIds)]
+  if (entryIds.length === 0) throw new MoveEntriesError('no-selection')
+  if (opts.sourceRoomId === opts.targetRoomId) throw new MoveEntriesError('same-room')
+
+  return db.transaction('rw', db.rooms, db.entries, db.signoffs, async () => {
+    const [sourceRoom, targetRoom, rows] = await Promise.all([
+      db.rooms.get(opts.sourceRoomId),
+      db.rooms.get(opts.targetRoomId),
+      db.entries.bulkGet(entryIds),
+    ])
+    if (!sourceRoom || !targetRoom || sourceRoom.exerciseId !== targetRoom.exerciseId) {
+      throw new MoveEntriesError('room-not-found')
+    }
+
+    const entries = rows.filter((entry): entry is InspectionEntry => Boolean(entry && !entry.deleted))
+    if (entries.length !== entryIds.length) throw new MoveEntriesError('room-not-found')
+    if (entries.some((entry) => entry.roomId !== sourceRoom.id || entry.exerciseId !== targetRoom.exerciseId)) {
+      throw new MoveEntriesError('wrong-source')
+    }
+
+    const targetEntries = (await db.entries.where('roomId').equals(targetRoom.id).toArray()).filter(
+      (entry) => !entry.deleted,
+    )
+    const targetAssetTypes = new Set(
+      targetEntries.filter((entry) => !entry.isUnlistedItem && entry.assetTypeId).map((entry) => entry.assetTypeId),
+    )
+    if (entries.some((entry) => !entry.isUnlistedItem && entry.assetTypeId && targetAssetTypes.has(entry.assetTypeId))) {
+      throw new MoveEntriesError('destination-conflict')
+    }
+
+    const updatedAt = Date.now()
+    const moved = entries.map((entry) => ({
+      ...entry,
+      roomId: targetRoom.id,
+      expectedRoomId: entry.expectedRoomId === targetRoom.id ? undefined : entry.expectedRoomId,
+      editHistory: [
+        ...(entry.editHistory ?? []),
+        {
+          field: 'room',
+          oldValue: sourceRoom.name,
+          newValue: targetRoom.name,
+          editedBy: opts.actorId,
+          editedAt: updatedAt,
+        },
+      ].slice(-EDIT_HISTORY_LIMIT),
+      updatedAt,
+      syncStatus: 'pending' as const,
+    }))
+    await db.entries.bulkPut(moved)
+
+    // A signed total is no longer true after either room changes. Reopen both
+    // rooms so they can be reviewed and signed again with the corrected totals.
+    for (const roomId of [sourceRoom.id, targetRoom.id]) {
+      const signoffs = await db.signoffs.where('roomId').equals(roomId).toArray()
+      await db.signoffs.bulkPut(
+        signoffs
+          .filter((signoff) => !signoff.deleted)
+          .map((signoff) => ({ ...signoff, deleted: true, updatedAt, syncStatus: 'pending' as const })),
+      )
+    }
+
+    return {
+      movedCards: moved.length,
+      movedItems: moved.reduce((sum, entry) => sum + (entry.notPresent ? 0 : entry.quantity), 0),
+    }
+  })
 }
 
 /** Resolves a sync conflict by keeping the local record or the server's copy. */

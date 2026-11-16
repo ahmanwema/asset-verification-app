@@ -399,6 +399,55 @@ describe('correcting an item quantity', () => {
   }, 10_000)
 })
 
+describe('moving recorded items to the correct room', () => {
+  it('moves one selected card and can then move all remaining cards', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+
+    fireEvent.click(await screen.findByText('Student Chair'))
+    fireEvent.change(await screen.findByDisplayValue('1'), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await screen.findByText('1/16 items checked', undefined, { timeout: 5000 })
+
+    fireEvent.click(screen.getByText('Student Table'))
+    fireEvent.change(await screen.findByDisplayValue('1'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await screen.findByText('2/16 items checked', undefined, { timeout: 5000 })
+
+    const p4 = await db.rooms.filter((room) => room.name === 'P4').first()
+    expect(p4).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move items' }))
+    let dialog = await screen.findByRole('dialog', { name: 'Move items' })
+    fireEvent.click(within(dialog).getByLabelText('Select Student Chair to move'))
+    fireEvent.change(within(dialog).getByLabelText('Move to room'), { target: { value: p4!.id } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Move 1 selected' }))
+
+    await waitFor(async () => {
+      const entries = (await db.entries.toArray()).filter((entry) => !entry.deleted)
+      const chair = entries.find((entry) => entry.assetTypeId && entry.quantity === 3)
+      const table = entries.find((entry) => entry.assetTypeId && entry.quantity === 2)
+      expect(chair?.roomId).toBe(p4!.id)
+      expect(table?.roomId).not.toBe(p4!.id)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move items' }))
+    dialog = await screen.findByRole('dialog', { name: 'Move items' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Select all' }))
+    fireEvent.change(within(dialog).getByLabelText('Move to room'), { target: { value: p4!.id } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Move all items' }))
+
+    await waitFor(async () => {
+      const source = await db.rooms.filter((room) => room.name === 'P3').first()
+      const entries = (await db.entries.toArray()).filter((entry) => !entry.deleted)
+      expect(entries.every((entry) => entry.roomId === p4!.id)).toBe(true)
+      expect(entries.filter((entry) => entry.roomId === source!.id)).toHaveLength(0)
+    })
+    expect(await screen.findByText('0/16 items checked')).toBeTruthy()
+  }, 15_000)
+})
+
 describe('capture & identify', () => {
   const photo = () => new File([new Uint8Array([1, 2, 3])], 'item.jpg', { type: 'image/jpeg' })
 

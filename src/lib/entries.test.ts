@@ -4,10 +4,12 @@ import { resetDb, seedFixture, type Fixture } from '../test/fixtures'
 import {
   ConversionError,
   EDIT_HISTORY_LIMIT,
+  MoveEntriesError,
   ValidationError,
   convertToAssetType,
   deleteEntry,
   markNotPresent,
+  moveEntriesToRoom,
   reopenRoom,
   resolveConflict,
   saveEntry,
@@ -205,6 +207,75 @@ describe('room sign-off', () => {
     await reopenRoom(fx.room.id)
     floors = await loadFloorProgress(fx.exercise.id)
     expect(floors[0].rooms.find((r) => r.room.id === fx.room.id)?.status).toBe('in_progress')
+  })
+})
+
+describe('moving recorded items between rooms', () => {
+  it('moves only the selected cards and keeps their identity and details', async () => {
+    const chair = await saveEntry(draft({
+      quantity: 3,
+      brand: 'Furnico',
+      serialNumbers: ['C-1', 'C-2', 'C-3'],
+      photoIds: ['photo-1'],
+    }))
+    const table = await saveEntry(draft({ assetType: fx.table, quantity: 2 }))
+    const tagsBefore = chair.tagNumbers
+
+    await signoffRoom({ exerciseId: fx.exercise.id, roomId: fx.room.id, inspectorId: fx.inspector.id, notes: '' })
+    await signoffRoom({ exerciseId: fx.exercise.id, roomId: fx.room2.id, inspectorId: fx.inspector.id, notes: '' })
+
+    const result = await moveEntriesToRoom({
+      sourceRoomId: fx.room.id,
+      targetRoomId: fx.room2.id,
+      entryIds: [chair.id],
+      actorId: fx.inspector2.id,
+    })
+
+    expect(result).toEqual({ movedCards: 1, movedItems: 3 })
+    const moved = await db.entries.get(chair.id)
+    expect(moved).toMatchObject({ roomId: fx.room2.id, quantity: 3, brand: 'Furnico', photoIds: ['photo-1'] })
+    expect(moved?.tagNumbers).toEqual(tagsBefore)
+    expect(moved?.editHistory.at(-1)).toMatchObject({
+      field: 'room',
+      oldValue: fx.room.name,
+      newValue: fx.room2.name,
+      editedBy: fx.inspector2.id,
+    })
+    expect((await db.entries.get(table.id))?.roomId).toBe(fx.room.id)
+    expect((await db.signoffs.where('roomId').equals(fx.room.id).first())?.deleted).toBe(true)
+    expect((await db.signoffs.where('roomId').equals(fx.room2.id).first())?.deleted).toBe(true)
+  })
+
+  it('moves every selected card together', async () => {
+    const chair = await saveEntry(draft({ quantity: 4 }))
+    const table = await saveEntry(draft({ assetType: fx.table, quantity: 2 }))
+
+    const result = await moveEntriesToRoom({
+      sourceRoomId: fx.room.id,
+      targetRoomId: fx.room2.id,
+      entryIds: [chair.id, table.id],
+      actorId: fx.inspector.id,
+    })
+
+    expect(result).toEqual({ movedCards: 2, movedItems: 6 })
+    expect((await db.entries.where('roomId').equals(fx.room.id).toArray()).filter((entry) => !entry.deleted)).toHaveLength(0)
+    expect((await db.entries.where('roomId').equals(fx.room2.id).toArray()).filter((entry) => !entry.deleted)).toHaveLength(2)
+  })
+
+  it('does not change anything when the destination already has that asset type', async () => {
+    const source = await saveEntry(draft({ quantity: 4 }))
+    await saveEntry(draft({ room: fx.room2, quantity: 1 }))
+
+    const attempt = moveEntriesToRoom({
+      sourceRoomId: fx.room.id,
+      targetRoomId: fx.room2.id,
+      entryIds: [source.id],
+      actorId: fx.inspector.id,
+    })
+    await expect(attempt).rejects.toBeInstanceOf(MoveEntriesError)
+    await expect(attempt).rejects.toMatchObject({ code: 'destination-conflict' })
+
+    expect((await db.entries.get(source.id))?.roomId).toBe(fx.room.id)
   })
 })
 
