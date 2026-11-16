@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
-import { collectLabels, labelMatchesQuery, printLabels, type LabelData, type LabelScope } from '../lib/labels'
+import {
+  collectLabels,
+  labelMatchesQuery,
+  labelMatchesSearchTerms,
+  labelSearchSuggestions,
+  printLabels,
+  type LabelData,
+  type LabelScope,
+  type LabelSearchField,
+  type LabelSearchTerm,
+} from '../lib/labels'
 import { photoBlob } from '../lib/photos'
 import { ensureEntryPhotos } from '../lib/sync'
 import { useSession } from '../state/session'
@@ -44,6 +54,8 @@ export default function LabelsPage() {
   const [floorId, setFloorId] = useState('')
   const [roomId, setRoomId] = useState('')
   const [query, setQuery] = useState('')
+  const [searchTerms, setSearchTerms] = useState<LabelSearchTerm[]>([])
+  const [searchFocused, setSearchFocused] = useState(false)
   const [condition, setCondition] = useState<Condition | ''>('')
   const [photoFilter, setPhotoFilter] = useState<PhotoFilter>('all')
   const [busy, setBusy] = useState(false)
@@ -69,15 +81,20 @@ export default function LabelsPage() {
     return collectLabels({ exerciseId: exercise.id, scope, roomId, floorId })
   }, [exercise?.id, scope, roomId, floorId])
 
+  const suggestions = useMemo(
+    () => labelSearchSuggestions(sheet?.labels ?? [], searchTerms, query),
+    [sheet, searchTerms, query],
+  )
+
   const filteredLabels = useMemo(() => {
     if (!sheet) return []
     return sheet.labels.filter((label) => {
       if (condition && label.condition !== condition) return false
       if (photoFilter === 'with' && label.photoCount === 0) return false
       if (photoFilter === 'without' && label.photoCount > 0) return false
-      return labelMatchesQuery(label, query)
+      return labelMatchesSearchTerms(label, searchTerms) && labelMatchesQuery(label, query)
     })
-  }, [sheet, query, condition, photoFilter])
+  }, [sheet, query, searchTerms, condition, photoFilter])
 
   const visibleLabels = filteredLabels.slice(0, MAX_VISIBLE)
   const groups = useMemo(() => {
@@ -91,7 +108,7 @@ export default function LabelsPage() {
     return [...grouped.values()]
   }, [visibleLabels])
 
-  const hasFilters = Boolean(query.trim() || condition || photoFilter !== 'all')
+  const hasFilters = Boolean(query.trim() || searchTerms.length || condition || photoFilter !== 'all')
 
   if (!exercise) return <EmptyState title={t('common.empty')} />
 
@@ -107,6 +124,17 @@ export default function LabelsPage() {
     } finally {
       setBusy(false)
     }
+  }
+
+  function searchFieldLabel(field: LabelSearchField): string {
+    if (field === 'room') return t('labels.searchFieldRoom')
+    if (field === 'brand') return t('labels.searchFieldBrand')
+    return t('labels.searchFieldAsset')
+  }
+
+  function addSearchTerm(term: LabelSearchTerm) {
+    setSearchTerms((current) => [...current, term])
+    setQuery('')
   }
 
   return (
@@ -180,15 +208,84 @@ export default function LabelsPage() {
           </Field>
         </div>
 
-        <Field label={t('common.search')}>
-          <TextInput
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('labels.searchPlaceholder')}
-            type="search"
-          />
-        </Field>
-        <p className="-mt-2 text-[11px] text-slate-500">{t('labels.searchHint')}</p>
+        <div className="space-y-2">
+          {searchTerms.length > 0 && (
+            <div className="flex flex-wrap gap-2" aria-label={t('labels.selectedSearchFilters')}>
+              {searchTerms.map((term) => {
+                const fieldLabel = searchFieldLabel(term.field)
+                return (
+                  <span
+                    key={`${term.field}:${term.value}`}
+                    className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 py-1 pl-2.5 pr-1 text-xs text-brand-900"
+                  >
+                    <span className="shrink-0 text-[10px] font-bold uppercase text-brand-600">{fieldLabel}</span>
+                    <span className="truncate font-semibold">{term.value}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerms((current) => current.filter((candidate) => candidate !== term))}
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-lg leading-none text-brand-700 hover:bg-brand-100"
+                      aria-label={t('labels.removeSearchFilter', { field: fieldLabel, value: term.value })}
+                    >
+                      &times;
+                    </button>
+                  </span>
+                )
+              })}
+            </div>
+          )}
+
+          <div className="relative">
+            <Field label={t('common.search')} hint={t('labels.searchHint')}>
+              <TextInput
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setSearchFocused(false)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && suggestions[0]) {
+                    event.preventDefault()
+                    addSearchTerm(suggestions[0])
+                  } else if (event.key === 'Escape') {
+                    setSearchFocused(false)
+                  }
+                }}
+                placeholder={t('labels.searchPlaceholder')}
+                type="search"
+                autoComplete="off"
+                aria-autocomplete="list"
+                aria-expanded={searchFocused && suggestions.length > 0}
+                aria-controls="label-search-suggestions"
+              />
+            </Field>
+
+            {searchFocused && suggestions.length > 0 && (
+              <div
+                id="label-search-suggestions"
+                role="listbox"
+                aria-label={t('labels.searchSuggestions')}
+                className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl"
+              >
+                {suggestions.map((suggestion) => {
+                  const fieldLabel = searchFieldLabel(suggestion.field)
+                  return (
+                    <button
+                      key={`${suggestion.field}:${suggestion.value}`}
+                      type="button"
+                      role="option"
+                      aria-selected="false"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => addSearchTerm(suggestion)}
+                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-brand-50 active:bg-brand-100"
+                    >
+                      <span className="w-16 shrink-0 text-[10px] font-bold uppercase text-slate-400">{fieldLabel}</span>
+                      <span className="min-w-0 truncate text-sm font-semibold text-slate-800">{suggestion.value}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
 
         <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
           <span>{t('labels.showing', { shown: filteredLabels.length, total: sheet?.labels.length ?? 0 })}</span>
@@ -198,6 +295,7 @@ export default function LabelsPage() {
               className="font-bold text-brand-700"
               onClick={() => {
                 setQuery('')
+                setSearchTerms([])
                 setCondition('')
                 setPhotoFilter('all')
               }}

@@ -26,6 +26,54 @@ export interface LabelSheet {
   labels: LabelData[]
 }
 
+export type LabelSearchField = 'room' | 'description' | 'brand'
+
+export interface LabelSearchTerm {
+  field: LabelSearchField
+  value: string
+}
+
+/** Selected suggestion chips are field-specific and combine with AND logic. */
+export function labelMatchesSearchTerms(label: LabelData, terms: LabelSearchTerm[]): boolean {
+  return terms.every((term) => label[term.field].localeCompare(term.value, undefined, { sensitivity: 'base' }) === 0)
+}
+
+/** Builds de-duplicated room, asset and brand suggestions from the current result set. */
+export function labelSearchSuggestions(
+  labels: LabelData[],
+  selected: LabelSearchTerm[],
+  query: string,
+  limit = 8,
+): LabelSearchTerm[] {
+  const needle = query.trim().toLocaleLowerCase()
+  if (!needle) return []
+
+  const selectedKeys = new Set(selected.map((term) => `${term.field}\u0000${term.value.toLocaleLowerCase()}`))
+  const options = new Map<string, LabelSearchTerm>()
+  for (const label of labels) {
+    if (!labelMatchesSearchTerms(label, selected)) continue
+    const candidates: LabelSearchTerm[] = [
+      { field: 'room', value: label.room },
+      { field: 'description', value: label.description },
+      { field: 'brand', value: label.brand },
+    ]
+    for (const candidate of candidates) {
+      const value = candidate.value.trim()
+      const key = `${candidate.field}\u0000${value.toLocaleLowerCase()}`
+      if (!value || selectedKeys.has(key) || !value.toLocaleLowerCase().includes(needle)) continue
+      if (!options.has(key)) options.set(key, { ...candidate, value })
+    }
+  }
+
+  return [...options.values()]
+    .sort((a, b) => {
+      const aStarts = a.value.toLocaleLowerCase().startsWith(needle)
+      const bStarts = b.value.toLocaleLowerCase().startsWith(needle)
+      return Number(bStarts) - Number(aStarts) || a.value.localeCompare(b.value) || a.field.localeCompare(b.field)
+    })
+    .slice(0, limit)
+}
+
 /**
  * Matches every search term independently, so one query can combine fields.
  * For example, "Reception Mouse Logitech" can match room + item + brand.

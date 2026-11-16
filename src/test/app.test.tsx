@@ -1142,7 +1142,23 @@ describe('finding labels before printing', () => {
     expect(screen.getByLabelText('Condition')).toBeTruthy()
     expect(screen.getByLabelText('Photos')).toBeTruthy()
 
-    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'P3-002' } })
+    const search = screen.getByLabelText('Search')
+    fireEvent.focus(search)
+    fireEvent.change(search, { target: { value: 'p3' } })
+    fireEvent.click(await screen.findByRole('option', { name: /room.*p3/i }))
+    expect(screen.getByRole('button', { name: 'Remove Room: P3' })).toBeTruthy()
+    expect((search as HTMLInputElement).value).toBe('')
+
+    fireEvent.change(search, { target: { value: 'student' } })
+    fireEvent.click(await screen.findByRole('option', { name: /asset.*student chair/i }))
+    const removeAsset = screen.getByRole('button', { name: 'Remove Asset: Student Chair' })
+    expect(removeAsset).toBeTruthy()
+    expect(screen.getAllByText('Showing 2 of 2', undefined)).toHaveLength(2)
+
+    fireEvent.click(removeAsset)
+    expect(screen.queryByRole('button', { name: 'Remove Asset: Student Chair' })).toBeNull()
+
+    fireEvent.change(search, { target: { value: 'P3-002' } })
     await waitFor(() => expect(screen.queryByText('SC-MAIN-1F-P3-001')).toBeNull())
     expect(screen.getAllByText('Showing 1 of 2')).toHaveLength(2)
     expect(screen.getByText('SC-MAIN-1F-P3-002')).toBeTruthy()
