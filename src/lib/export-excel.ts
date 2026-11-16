@@ -5,6 +5,7 @@ import { entryConditionCounts } from './queries'
 import type { Condition, InspectionEntry } from '../types'
 import { CONDITIONS } from '../types'
 import { calculateDepreciation, financialRecordFor } from './depreciation'
+import type { AssetFinancialRecord } from '../types'
 
 const CONDITION_LABEL: Record<Condition, string> = {
   G: 'Good',
@@ -15,6 +16,20 @@ const CONDITION_LABEL: Record<Condition, string> = {
 
 /** Unserviceable first — that is the order a maintenance team acts on. */
 const CONDITION_PRIORITY: Record<Condition, number> = { U: 1, P: 2, F: 3, G: 4 }
+
+const METHOD_LABEL: Record<string, string> = {
+  diminishing_balance: 'Diminishing balance',
+  straight_line: 'Straight line',
+}
+
+function methodLabel(record: AssetFinancialRecord | undefined): string {
+  return record ? (METHOD_LABEL[record.depreciationMethod] ?? record.depreciationMethod) : ''
+}
+
+const MONTH_END_LABEL = [
+  '', '31 January', '28/29 February', '31 March', '30 April', '31 May', '30 June',
+  '31 July', '31 August', '30 September', '31 October', '30 November', '31 December',
+]
 
 export type ReportKind = 'register' | 'depreciation' | 'rooms' | 'condition' | 'variance' | 'tags' | 'editlog'
 
@@ -27,6 +42,9 @@ export interface ReportBundle {
     approvedBy: string
     teamLeader: string
     generatedAt: string
+    /** Date the accounting columns are stated as at. */
+    asOfDate: string
+    fiscalYearEnd: string
   }
   summary: Array<Record<string, string | number>>
   register: Array<Record<string, string | number>>
@@ -64,7 +82,10 @@ function conditionSummary(entry: InspectionEntry): string {
 }
 
 /** Pulls everything the reports need and shapes the rows for each sheet. */
-export async function buildReportBundle(exerciseId: string): Promise<ReportBundle> {
+export async function buildReportBundle(
+  exerciseId: string,
+  options?: { asOfDate?: string },
+): Promise<ReportBundle> {
   const [exercise, blocks, floors, rooms, assetTypes, inspectors, entriesRaw, signoffs, orgs] = await Promise.all([
     db.exercises.get(exerciseId),
     db.blocks.where('exerciseId').equals(exerciseId).toArray().then((rows) => rows.filter((block) => !block.deleted)),
@@ -86,6 +107,11 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
   ])
 
   const org = orgs.find((o) => o.id === exercise?.orgId)
+  // Counting happened on the exercise date; the accounts are read at a
+  // reporting date, which is normally a year end. An explicit option wins,
+  // then the saved reporting date, then the exercise date.
+  const asOfDate = options?.asOfDate || exercise?.reportingDate || exercise?.date || ''
+  const fiscalYearEndMonth = org?.fiscalYearEndMonth ?? 12
   const blockById = new Map(blocks.map((b) => [b.id, b]))
   const floorById = new Map(floors.map((f) => [f.id, f]))
   const roomById = new Map(rooms.map((r) => [r.id, r]))
@@ -142,7 +168,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
     tags.forEach((tag, i) => {
       const detail = itemDetailFor(e, tag, i)
       const finance = financialRecordFor(e, tag)
-      const depreciation = calculateDepreciation(finance, exercise?.date ?? '')
+      const depreciation = calculateDepreciation(finance, asOfDate, fiscalYearEndMonth)
       register.push({
         'Tag Number': tag,
         'Asset Description': nameOf(e),
@@ -157,13 +183,14 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         Condition: CONDITION_LABEL[perItem[i] ?? e.condition],
         'Acquisition Date': finance?.acquisitionDate ?? '',
         'Available for Use': finance?.availableForUseDate ?? '',
-        'Original Cost': finance?.originalCost ?? '',
-        'Residual Value': finance?.residualValue ?? '',
+        'Original Cost (TZS)': finance?.originalCost ?? '',
+        'Residual Value (TZS)': finance?.residualValue ?? '',
         'Useful Life (Years)': finance?.usefulLifeMonths ? finance.usefulLifeMonths / 12 : '',
-        'Annual Rate (%)': finance?.annualDepreciationRate ?? '',
-        'Depreciation Method': finance ? 'Diminishing balance' : '',
-        'Accumulated Depreciation': depreciation.complete ? Math.round(depreciation.accumulatedDepreciation * 100) / 100 : '',
-        'Net Book Value': depreciation.complete ? Math.round(depreciation.carryingAmount * 100) / 100 : '',
+        'Annual Rate (%)': finance && finance.depreciationMethod !== 'straight_line' ? finance.annualDepreciationRate : '',
+        'Depreciation Method': methodLabel(finance),
+        'Accumulated Depreciation (TZS)': depreciation.complete ? Math.round(depreciation.accumulatedDepreciation * 100) / 100 : '',
+        'Net Book Value (TZS)': depreciation.complete ? Math.round(depreciation.carryingAmount * 100) / 100 : '',
+        'Valued As At': finance ? asOfDate : '',
         'Item Type': e.itemType ?? '',
         Material: e.material ?? '',
         Colour: e.colour ?? '',
@@ -188,7 +215,7 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
     e.tagNumbers.forEach((tag, index) => {
       const detail = itemDetailFor(e, tag, index)
       const finance = financialRecordFor(e, tag)
-      const result = calculateDepreciation(finance, exercise?.date ?? '')
+      const result = calculateDepreciation(finance, asOfDate, fiscalYearEndMonth)
       depreciation.push({
         'Tag Number': tag,
         'Asset Description': nameOf(e),
@@ -199,17 +226,17 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
         'Serial Number': detail.serialNumber,
         'Acquisition Date': finance?.acquisitionDate ?? '',
         'Available for Use': finance?.availableForUseDate ?? '',
-        'Original Cost': finance?.originalCost ?? '',
-        'Residual Value': finance?.residualValue ?? '',
+        'Original Cost (TZS)': finance?.originalCost ?? '',
+        'Residual Value (TZS)': finance?.residualValue ?? '',
         'Useful Life (Years)': finance?.usefulLifeMonths ? finance.usefulLifeMonths / 12 : '',
-        'Annual Rate (%)': finance?.annualDepreciationRate ?? '',
-        Method: finance ? 'Diminishing balance' : '',
-        'Opening Accumulated Depreciation': finance?.openingAccumulatedDepreciation ?? '',
+        'Annual Rate (%)': finance && finance.depreciationMethod !== 'straight_line' ? finance.annualDepreciationRate : '',
+        Method: methodLabel(finance),
+        'Opening Accumulated Depreciation (TZS)': finance?.openingAccumulatedDepreciation ?? '',
         'Opening Balance Date': finance?.openingBalanceDate ?? '',
-        'Current Year Depreciation': result.complete ? Math.round(result.currentPeriodDepreciation * 100) / 100 : '',
-        'Accumulated Depreciation': result.complete ? Math.round(result.accumulatedDepreciation * 100) / 100 : '',
-        'Net Book Value': result.complete ? Math.round(result.carryingAmount * 100) / 100 : '',
-        'As At': exercise?.date ?? '',
+        'Current Period Depreciation (TZS)': result.complete ? Math.round(result.currentPeriodDepreciation * 100) / 100 : '',
+        'Accumulated Depreciation (TZS)': result.complete ? Math.round(result.accumulatedDepreciation * 100) / 100 : '',
+        'Net Book Value (TZS)': result.complete ? Math.round(result.carryingAmount * 100) / 100 : '',
+        'As At': asOfDate,
         Supplier: finance?.supplier ?? '',
         'Invoice / Reference': finance?.invoiceNumber ?? '',
         'Funding Source': finance?.fundingSource ?? '',
@@ -448,6 +475,8 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
     { Metric: 'Address', Value: org?.address ?? '' },
     { Metric: 'Exercise', Value: exercise?.name ?? '' },
     { Metric: 'Exercise date', Value: exercise?.date ?? '' },
+    { Metric: 'Accounting figures as at', Value: asOfDate },
+    { Metric: 'Financial year ends', Value: MONTH_END_LABEL[fiscalYearEndMonth] ?? '31 December' },
     { Metric: 'Team leader', Value: whoById.get(exercise?.teamLeaderId ?? '')?.name ?? '' },
     { Metric: 'Approval authority', Value: exercise?.approvedBy ?? '' },
     { Metric: 'Report generated', Value: fmtDate(Date.now()) },
@@ -459,8 +488,8 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
     { Metric: 'Items counted', Value: entries.filter((e) => !e.notPresent).reduce((n, e) => n + e.quantity, 0) },
     { Metric: 'Tags issued', Value: tags.length },
     { Metric: 'Assets with financial details', Value: depreciation.filter((row) => row.Status === 'Complete').length },
-    { Metric: 'Total historical cost', Value: depreciation.reduce((sum, row) => sum + Number(row['Original Cost'] || 0), 0) },
-    { Metric: 'Total net book value', Value: depreciation.reduce((sum, row) => sum + Number(row['Net Book Value'] || 0), 0) },
+    { Metric: 'Total historical cost (TZS)', Value: depreciation.reduce((sum, row) => sum + Number(row['Original Cost (TZS)'] || 0), 0) },
+    { Metric: 'Total net book value (TZS)', Value: depreciation.reduce((sum, row) => sum + Number(row['Net Book Value (TZS)'] || 0), 0) },
     { Metric: 'Photos attached', Value: entries.reduce((n, e) => n + e.photoIds.length, 0) },
     { Metric: 'Good', Value: conditionTotals.G },
     { Metric: 'Fair', Value: conditionTotals.F },
@@ -481,6 +510,8 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
       approvedBy: exercise?.approvedBy ?? '',
       teamLeader: whoById.get(exercise?.teamLeaderId ?? '')?.name ?? '',
       generatedAt: fmtDate(Date.now()),
+      asOfDate,
+      fiscalYearEnd: MONTH_END_LABEL[fiscalYearEndMonth] ?? '31 December',
     },
     summary,
     register,
@@ -535,8 +566,12 @@ const SHEETS: Record<ReportKind, { name: string; suffix: string }> = {
 }
 
 /** Downloads a single report as its own workbook. */
-export async function exportReport(exerciseId: string, kind: ReportKind): Promise<number> {
-  const [XLSX, bundle] = await Promise.all([loadXlsx(), buildReportBundle(exerciseId)])
+export async function exportReport(
+  exerciseId: string,
+  kind: ReportKind,
+  options?: { asOfDate?: string },
+): Promise<number> {
+  const [XLSX, bundle] = await Promise.all([loadXlsx(), buildReportBundle(exerciseId, options)])
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.summary, 'No data'), 'Summary')
 
@@ -565,8 +600,8 @@ export async function exportReport(exerciseId: string, kind: ReportKind): Promis
 }
 
 /** Downloads every report as one multi-sheet workbook. */
-export async function exportFullWorkbook(exerciseId: string): Promise<number> {
-  const [XLSX, bundle] = await Promise.all([loadXlsx(), buildReportBundle(exerciseId)])
+export async function exportFullWorkbook(exerciseId: string, options?: { asOfDate?: string }): Promise<number> {
+  const [XLSX, bundle] = await Promise.all([loadXlsx(), buildReportBundle(exerciseId, options)])
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.summary, 'No data'), 'Summary')
   XLSX.utils.book_append_sheet(wb, sheetFrom(XLSX, bundle.register, 'Nothing recorded yet'), 'Fixed Assets Register')

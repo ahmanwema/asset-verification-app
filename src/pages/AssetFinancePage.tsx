@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
-import { calculateDepreciation, financialRecordComplete, financialRecordFor, saveFinancialRecords } from '../lib/depreciation'
+import { calculateDepreciation, financialRecordComplete, financialRecordFor, residualAtEndOfLife, saveFinancialRecords } from '../lib/depreciation'
 import { useSession } from '../state/session'
 import { useT } from '../i18n'
 import { Button, Card, EmptyState, Field, Select, StatTile, TextArea, TextInput, Toast } from '../components/ui'
-import type { AssetFinancialRecord } from '../types'
+import type { AssetFinancialRecord, DepreciationMethod } from '../types'
 
 type ApplyScope = 'single' | 'selected'
 type CostMode = 'per_item' | 'invoice_total'
@@ -37,6 +37,7 @@ export default function AssetFinancePage() {
   const [cost, setCost] = useState('')
   const [residual, setResidual] = useState('0')
   const [usefulYears, setUsefulYears] = useState('')
+  const [method, setMethod] = useState<DepreciationMethod>('diminishing_balance')
   const [annualRate, setAnnualRate] = useState('')
   const [openingDepreciation, setOpeningDepreciation] = useState('0')
   const [openingDate, setOpeningDate] = useState('')
@@ -52,12 +53,13 @@ export default function AssetFinancePage() {
     const entry = await db.entries.get(entryId)
     if (!entry || entry.deleted) return null
     const room = await db.rooms.get(entry.roomId)
-    const [floor, type] = await Promise.all([
+    const [floor, type, org] = await Promise.all([
       room ? db.floors.get(room.floorId) : undefined,
       entry.assetTypeId ? db.assetTypes.get(entry.assetTypeId) : undefined,
+      exercise ? db.organizations.get(exercise.orgId) : undefined,
     ])
-    return { entry, room, floor, type }
-  }, [entryId])
+    return { entry, room, floor, type, org }
+  }, [entryId, exercise?.orgId])
 
   const tag = data?.entry.tagNumbers.includes(requestedTag)
     ? requestedTag
@@ -71,6 +73,7 @@ export default function AssetFinancePage() {
     setCost(saved ? String(saved.originalCost) : '')
     setResidual(saved ? String(saved.residualValue) : '0')
     setUsefulYears(saved?.usefulLifeMonths ? String(saved.usefulLifeMonths / 12) : '')
+    setMethod(saved?.depreciationMethod ?? 'diminishing_balance')
     setAnnualRate(saved?.annualDepreciationRate ? String(saved.annualDepreciationRate) : '')
     setOpeningDepreciation(saved ? String(saved.openingAccumulatedDepreciation) : '0')
     setOpeningDate(saved?.openingBalanceDate ?? '')
@@ -102,8 +105,10 @@ export default function AssetFinancePage() {
     originalCost: perItemCost,
     residualValue: numeric(residual),
     usefulLifeMonths: Math.round(numeric(usefulYears) * 12),
-    depreciationMethod: 'diminishing_balance',
-    annualDepreciationRate: numeric(annualRate),
+    depreciationMethod: method,
+    // Straight line derives its charge from the life, so a stale rate from an
+    // earlier method must not travel with the record.
+    annualDepreciationRate: method === 'straight_line' ? 0 : numeric(annualRate),
     openingAccumulatedDepreciation: numeric(openingDepreciation),
     openingBalanceDate: openingDate,
     supplier: supplier.trim(),
@@ -112,8 +117,10 @@ export default function AssetFinancePage() {
     notes: notes.trim(),
     updatedAt: Date.now(),
     updatedBy: inspector?.id ?? '',
-  }), [tag, acquisitionDate, availableDate, perItemCost, residual, usefulYears, annualRate, openingDepreciation, openingDate, supplier, invoice, funding, notes, inspector?.id])
-  const result = calculateDepreciation(draft, exercise?.date ?? new Date().toISOString().slice(0, 10))
+  }), [tag, acquisitionDate, availableDate, perItemCost, residual, usefulYears, method, annualRate, openingDepreciation, openingDate, supplier, invoice, funding, notes, inspector?.id])
+  const asOfDate = exercise?.reportingDate || exercise?.date || new Date().toISOString().slice(0, 10)
+  const result = calculateDepreciation(draft, asOfDate, data?.org?.fiscalYearEndMonth ?? 12)
+  const standingBalance = residualAtEndOfLife(draft)
 
   async function save(goNext = false) {
     if (!data || !inspector || !isAdmin) return
@@ -124,11 +131,12 @@ export default function AssetFinancePage() {
       setError(t('finance.selectTagError'))
       return
     }
-    if (!acquisitionDate || !availableDate || !costWasEntered || perItemCost < 0 || numeric(usefulYears) <= 0 || numeric(annualRate) <= 0) {
-      setError(t('finance.requiredError'))
+    const baseFieldsMissing = !acquisitionDate || !availableDate || !costWasEntered || perItemCost < 0 || numeric(usefulYears) <= 0
+    if (baseFieldsMissing || (method !== 'straight_line' && numeric(annualRate) <= 0)) {
+      setError(t(method === 'straight_line' ? 'finance.requiredErrorLine' : 'finance.requiredError'))
       return
     }
-    if (numeric(annualRate) > 100) {
+    if (method !== 'straight_line' && numeric(annualRate) > 100) {
       setError(t('finance.rateError'))
       return
     }
@@ -146,6 +154,10 @@ export default function AssetFinancePage() {
     }
     if (numeric(openingDepreciation) > perItemCost - numeric(residual)) {
       setError(t('finance.openingAmountError'))
+      return
+    }
+    if (openingDate && openingDate < availableDate) {
+      setError(t('finance.openingBeforeAvailableError'))
       return
     }
     setBusy(true)
@@ -271,6 +283,8 @@ export default function AssetFinancePage() {
         </Card>
       )}
 
+      <p className="text-xs text-slate-500">{t('finance.asAt', { date: asOfDate })} · {t('finance.asAtHint')}</p>
+
       {result.complete && (
         <div className="grid grid-cols-3 gap-2">
           <StatTile label={t('finance.currentDepreciation')} value={money(result.currentPeriodDepreciation)} />
@@ -294,9 +308,24 @@ export default function AssetFinancePage() {
           )}
           <Field label={applyScope === 'selected' ? t('finance.residualPerItem') : t('finance.residualValue')}><TextInput type="number" min="0" step="0.01" value={residual} onChange={(e) => setResidual(e.target.value)} disabled={!isAdmin} /></Field>
           <Field label={t('finance.usefulLife')} hint={t('finance.usefulLifeHint')}><TextInput type="number" min="0.1" step="0.5" value={usefulYears} onChange={(e) => setUsefulYears(e.target.value)} disabled={!isAdmin} /></Field>
-          <Field label={t('finance.rate')} hint={t('finance.rateHint')}><TextInput type="number" min="0.01" max="100" step="0.01" value={annualRate} onChange={(e) => setAnnualRate(e.target.value)} disabled={!isAdmin} /></Field>
-          <Field label={t('finance.method')}><Select value="diminishing_balance" disabled><option value="diminishing_balance">{t('finance.diminishingBalance')}</option></Select></Field>
+          <Field label={t('finance.method')} hint={t('finance.methodHint')}>
+            <Select value={method} onChange={(e) => setMethod(e.target.value as DepreciationMethod)} disabled={!isAdmin}>
+              <option value="straight_line">{t('finance.straightLine')}</option>
+              <option value="diminishing_balance">{t('finance.diminishingBalance')}</option>
+            </Select>
+          </Field>
+          {/* The rate only drives the reducing-balance method; under straight
+              line the useful life sets the charge, so the field is not shown. */}
+          {method !== 'straight_line' && (
+            <Field label={t('finance.rate')} hint={t('finance.rateHint')}><TextInput type="number" min="0.01" max="100" step="0.01" value={annualRate} onChange={(e) => setAnnualRate(e.target.value)} disabled={!isAdmin} /></Field>
+          )}
         </div>
+        <p className="text-xs text-slate-500">{t('finance.lifeCapNote')}</p>
+        {standingBalance !== null && standingBalance > numeric(residual) + 1 && (
+          <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+            {t('finance.rateLeavesBalance', { amount: money(standingBalance), years: numeric(usefulYears) })}
+          </p>
+        )}
       </Card>
 
       <Card className="space-y-4 p-4">

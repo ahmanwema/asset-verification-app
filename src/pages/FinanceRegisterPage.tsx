@@ -5,7 +5,7 @@ import { db } from '../db/db'
 import { calculateDepreciation, financialRecordComplete, financialRecordFor } from '../lib/depreciation'
 import { useSession } from '../state/session'
 import { useT } from '../i18n'
-import { Card, EmptyState, Field, Select, StatTile, TextInput } from '../components/ui'
+import { Button, Card, EmptyState, Field, Select, StatTile, TextInput } from '../components/ui'
 
 type CompletionFilter = 'all' | 'complete' | 'missing'
 
@@ -21,12 +21,15 @@ export default function FinanceRegisterPage() {
 
   const data = useLiveQuery(async () => {
     if (!exercise) return undefined
-    const [entries, rooms, floors, types] = await Promise.all([
+    const [entries, rooms, floors, types, org] = await Promise.all([
       db.entries.where('exerciseId').equals(exercise.id).toArray(),
       db.rooms.where('exerciseId').equals(exercise.id).toArray(),
       db.floors.where('exerciseId').equals(exercise.id).toArray(),
       db.assetTypes.toArray(),
+      db.organizations.get(exercise.orgId),
     ])
+    const asOf = exercise.reportingDate || exercise.date
+    const fiscalYearEndMonth = org?.fiscalYearEndMonth ?? 12
     const roomById = new Map(rooms.map((room) => [room.id, room]))
     const floorById = new Map(floors.map((floor) => [floor.id, floor]))
     const typeById = new Map(types.map((type) => [type.id, type]))
@@ -40,7 +43,7 @@ export default function FinanceRegisterPage() {
           : (typeById.get(entry.assetTypeId ?? '')?.name ?? t('asset.unknown'))
         return entry.tagNumbers.map((tag, index) => {
           const record = financialRecordFor(entry, tag)
-          const result = calculateDepreciation(record, exercise.date)
+          const result = calculateDepreciation(record, asOf, fiscalYearEndMonth)
           return {
             entryId: entry.id,
             tag,
@@ -55,7 +58,7 @@ export default function FinanceRegisterPage() {
         })
       })
       .sort((a, b) => a.tag.localeCompare(b.tag))
-  }, [exercise?.id, exercise?.date, t])
+  }, [exercise?.id, exercise?.date, exercise?.reportingDate, exercise?.orgId, t])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -81,7 +84,7 @@ export default function FinanceRegisterPage() {
         </Link>
         <div>
           <h1 className="text-lg font-bold text-slate-900">{t('finance.title')}</h1>
-          <p className="text-xs text-slate-500">{t('finance.asAt', { date: exercise.date })}</p>
+          <p className="text-xs text-slate-500">{t('finance.asAt', { date: exercise.reportingDate || exercise.date })}</p>
         </div>
       </div>
 
@@ -90,6 +93,12 @@ export default function FinanceRegisterPage() {
         <StatTile label={t('finance.totalCost')} value={money(totalCost)} />
         <StatTile label={t('finance.netBookValue')} value={money(totalBookValue)} tone="brand" />
       </div>
+
+      {/* Costing thousands of identical items one tag at a time is the single
+          slowest part of a valuation, so the bulk route sits above the list. */}
+      <Link to="/finance/bulk" className="block">
+        <Button variant="secondary" full>{t('finance.bulk')}</Button>
+      </Link>
 
       <Card className="grid gap-3 p-4 sm:grid-cols-2">
         <Field label={t('common.search')}>

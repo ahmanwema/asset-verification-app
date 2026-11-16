@@ -8,6 +8,7 @@ import { SEED_PASSWORD, seedIfEmpty, startFresh } from '../db/seed'
 import { db, setMeta } from '../db/db'
 import { sha256 } from '../lib/hash'
 import { resetDb } from './fixtures'
+import { saveEntry } from '../lib/entries'
 
 function renderApp() {
   return render(
@@ -1359,4 +1360,55 @@ describe('opening an asset from a printed QR label', () => {
     expect(screen.getByText('Item photos')).toBeTruthy()
     expect(screen.getByText('No photo was taken for this item')).toBeTruthy()
   }, 10_000)
+})
+
+describe('bulk costing', () => {
+  it('costs every tag of one asset type in a single pass', async () => {
+    const exercise = (await db.exercises.toArray())[0]
+    const room = (await db.rooms.toArray())[0]
+    const floor = await db.floors.get(room.floorId)
+    const assetType = (await db.assetTypes.toArray()).find((type) => type.active)
+    const inspector = (await db.inspectors.toArray())[0]
+    if (!floor || !assetType) throw new Error('seed data missing')
+
+    // Two entries of the same type, five tags between them: exactly the shape
+    // that makes tag-by-tag costing slow.
+    await saveEntry({
+      exerciseId: exercise.id, room, floor, assetType, isUnlistedItem: false, quantity: 3,
+      serialNumbers: [], model: '', brand: '', condition: 'G', remarks: '',
+      inspectorId: inspector.id, notPresent: false,
+    })
+    await saveEntry({
+      exerciseId: exercise.id, room, floor, assetType, isUnlistedItem: false, quantity: 2,
+      serialNumbers: [], model: '', brand: '', condition: 'G', remarks: '',
+      inspectorId: inspector.id, notPresent: false,
+    })
+
+    await signIn()
+    fireEvent.click(await screen.findByText('Reports'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Enter costs & depreciation details' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cost a whole asset type' }))
+
+    // The type list is built from a live query, so wait for the option to
+    // arrive before choosing it.
+    const typeSelect = await screen.findByLabelText('Asset type')
+    await screen.findByRole('option', { name: /5\/5/ })
+    fireEvent.change(typeSelect, { target: { value: assetType.id } })
+    fireEvent.change(await screen.findByLabelText('Acquisition date'), { target: { value: '2024-01-01' } })
+    fireEvent.change(screen.getByLabelText('Cost per item (TZS)'), { target: { value: '80000' } })
+    fireEvent.change(screen.getByLabelText('Useful life (years)'), { target: { value: '5' } })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply to 5 tags' }))
+
+    await waitFor(async () => {
+      const entries = (await db.entries.where('exerciseId').equals(exercise.id).toArray())
+        .filter((entry) => !entry.deleted)
+      const records = entries.flatMap((entry) => entry.financialRecords ?? [])
+      expect(records).toHaveLength(5)
+      // One record per tag, straight line by default, no rate carried along.
+      expect(new Set(records.map((record) => record.tagNumber)).size).toBe(5)
+      expect(records.every((record) => record.depreciationMethod === 'straight_line')).toBe(true)
+      expect(records.every((record) => record.originalCost === 80_000)).toBe(true)
+    })
+  })
 })

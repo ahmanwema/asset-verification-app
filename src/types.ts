@@ -5,7 +5,7 @@ export type Condition = 'G' | 'F' | 'P' | 'U'
 export type Role = 'admin' | 'inspector'
 export type ExerciseStatus = 'draft' | 'active' | 'completed'
 export type Lang = 'en' | 'sw'
-export type DepreciationMethod = 'diminishing_balance'
+export type DepreciationMethod = 'diminishing_balance' | 'straight_line'
 
 export const CONDITIONS: Condition[] = ['G', 'F', 'P', 'U']
 
@@ -14,6 +14,11 @@ export interface Organization {
   name: string
   address: string
   logo?: string // data URL
+  /**
+   * Month the financial year ends in, 1-12. Absent on records created before
+   * the setting existed, which the readers treat as December.
+   */
+  fiscalYearEndMonth?: number
   updatedAt: number
   syncStatus: SyncStatus
 }
@@ -23,6 +28,12 @@ export interface Exercise {
   orgId: string
   name: string
   date: string // ISO yyyy-mm-dd
+  /**
+   * Date the accounting figures are stated as at. The verification date is
+   * when the counting happened; a register is read at a reporting date, which
+   * is usually a year end. Absent means "use the exercise date".
+   */
+  reportingDate?: string
   status: ExerciseStatus
   approvedBy: string
   teamLeaderId: string

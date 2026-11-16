@@ -108,6 +108,17 @@ export default function SetupPage() {
   )
 }
 
+/**
+ * Month ends offered for the financial year. Labelled from the browser's own
+ * month names so the list needs no translation of its own.
+ */
+const MONTHS = Array.from({ length: 12 }, (_, i) => {
+  const month = i + 1
+  const lastDay = new Date(Date.UTC(2001, month, 0)).getUTCDate()
+  const name = new Date(Date.UTC(2001, i, 1)).toLocaleString(undefined, { month: 'long', timeZone: 'UTC' })
+  return { value: month, label: `${lastDay} ${name}` }
+})
+
 // ----------------------------------------------------------------- org ------
 
 function OrgTab({
@@ -200,6 +211,30 @@ function OrgTab({
             disabled={!canEdit}
             onChange={(e) => void saveExercise({ date: e.target.value })}
           />
+        </Field>
+        {/* Counting happens on the exercise date; the accounts are stated at a
+            reporting date, which is normally a year end. Keeping them apart is
+            what lets one verification feed several reporting periods. */}
+        <Field label={t('setup.reportingDate')} hint={t('setup.reportingDateHint')}>
+          <TextInput
+            type="date"
+            defaultValue={exercise.reportingDate ?? ''}
+            disabled={!canEdit}
+            onChange={(e) => void saveExercise({ reportingDate: e.target.value })}
+          />
+        </Field>
+        <Field label={t('setup.fiscalYearEnd')}>
+          <Select
+            value={String(org.fiscalYearEndMonth ?? 12)}
+            disabled={!canEdit}
+            onChange={(e) => void saveOrg({ fiscalYearEndMonth: Number(e.target.value) })}
+          >
+            {MONTHS.map((month) => (
+              <option key={month.value} value={month.value}>
+                {month.label}
+              </option>
+            ))}
+          </Select>
         </Field>
         <Field label={t('setup.teamLeader')}>
           <Select
