@@ -319,6 +319,86 @@ describe('photographing items of one type that do not look alike', () => {
   })
 })
 
+describe('correcting an item quantity', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('removes a chosen item card and lowers the saved total without renumbering the others', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+    fireEvent.change(await screen.findByDisplayValue('1'), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await screen.findByText('1/16 items checked', undefined, { timeout: 5000 })
+
+    fireEvent.click(screen.getByText('Student Chair'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove item 2' }))
+    expect(screen.getByDisplayValue('2')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Remove item 3' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(async () => {
+      const [entry] = await db.entries.toArray()
+      expect(entry.quantity).toBe(2)
+      expect(entry.tagNumbers).toEqual(['SC-MAIN-1F-P3-001', 'SC-MAIN-1F-P3-003'])
+      expect(entry.itemDetails).toHaveLength(2)
+    })
+  }, 10_000)
+
+  it('persists a lower total entered directly in the quantity field', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+    fireEvent.change(await screen.findByDisplayValue('1'), { target: { value: '4' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await screen.findByText('1/16 items checked', undefined, { timeout: 5000 })
+
+    fireEvent.click(screen.getByText('Student Chair'))
+    fireEvent.change(await screen.findByDisplayValue('4'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(async () => {
+      const [entry] = await db.entries.toArray()
+      expect(entry.quantity).toBe(2)
+      expect(entry.tagNumbers).toHaveLength(2)
+      expect(entry.itemDetails).toHaveLength(2)
+    })
+  }, 10_000)
+
+  it('downloads an existing entry photo when Inspect is opened on another device', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+
+    fireEvent.click(await screen.findByLabelText('Photo for item 1'))
+    const camera = document.querySelector('input[capture="environment"][multiple]') as HTMLInputElement
+    fireEvent.change(camera, {
+      target: { files: [new File([new Uint8Array([1, 2, 3])], 'solar-panel.jpg', { type: 'image/jpeg' })] },
+    })
+    expect(await screen.findByText('📷 1')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await screen.findByText('1/16 items checked', undefined, { timeout: 5000 })
+
+    const [entry] = await db.entries.toArray()
+    const photoId = entry.photoIds[0]
+    await db.photos.delete(photoId)
+    await setMeta('syncToken', 'computer-token')
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL) => new Response(
+      new Uint8Array([9, 8, 7]),
+      { status: 200, headers: { 'Content-Type': 'image/jpeg' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+
+    fireEvent.click(screen.getByText('Student Chair'))
+    await waitFor(async () => expect(await db.photos.get(photoId)).toBeTruthy())
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`/photos/${photoId}`))).toBe(true)
+  }, 10_000)
+})
+
 describe('capture & identify', () => {
   const photo = () => new File([new Uint8Array([1, 2, 3])], 'item.jpg', { type: 'image/jpeg' })
 

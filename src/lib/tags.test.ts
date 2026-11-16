@@ -174,6 +174,45 @@ describe('tag allocation', () => {
     expect(shrunk.tagNumbers).toEqual(['SC-1F-P3-001', 'SC-1F-P3-002'])
   })
 
+  it('removes one chosen item without renumbering the labels that remain', async () => {
+    const first = await saveEntry({
+      exerciseId: fx.exercise.id,
+      room: fx.room,
+      floor: fx.floor,
+      assetType: fx.chair,
+      isUnlistedItem: false,
+      quantity: 4,
+      serialNumbers: [],
+      model: '',
+      brand: '',
+      condition: 'G',
+      remarks: '',
+      inspectorId: fx.inspector.id,
+      notPresent: false,
+    })
+
+    const kept = [first.tagNumbers[0], first.tagNumbers[2], first.tagNumbers[3]]
+    const edited = await saveEntry({
+      id: first.id,
+      exerciseId: fx.exercise.id,
+      room: fx.room,
+      floor: fx.floor,
+      assetType: fx.chair,
+      isUnlistedItem: false,
+      quantity: 3,
+      serialNumbers: [],
+      model: '',
+      brand: '',
+      condition: 'G',
+      remarks: '',
+      inspectorId: fx.inspector.id,
+      notPresent: false,
+      preferredTagNumbers: kept,
+    })
+
+    expect(edited.tagNumbers).toEqual(kept)
+  })
+
   it('keeps sequences independent per asset type and per room', async () => {
     const chairs = await allocateTagNumbers({
       roomId: fx.room.id,

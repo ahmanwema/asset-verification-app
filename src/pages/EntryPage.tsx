@@ -15,6 +15,7 @@ import {
 import { allocateTagNumbers, deriveCode } from '../lib/tags'
 import { breakdownIsValid } from '../lib/queries'
 import { blobToArrayBuffer, compressImage, photoBlob } from '../lib/photos'
+import { ensureEntryPhotos } from '../lib/sync'
 import { MAX_IDENTIFY_IMAGES, identifyPhoto } from '../lib/vision'
 import {
   Button,
@@ -160,8 +161,10 @@ export default function EntryPage() {
   const [remarks, setRemarks] = useState('')
   const [manualTags, setManualTags] = useState(false)
   const [tagDraft, setTagDraft] = useState<string[]>([])
+  const [preferredAutoTags, setPreferredAutoTags] = useState<string[] | null>(null)
   const [photos, setPhotos] = useState<DraftPhoto[]>([])
   const [removedPhotoIds, setRemovedPhotoIds] = useState<string[]>([])
+  const removedPhotoIdsRef = useRef<Set<string>>(new Set())
   const [error, setError] = useState<StringKey | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -265,6 +268,36 @@ export default function EntryPage() {
             }
           })),
         )
+      // A second device receives the entry record before it has the image
+      // bytes. Pull them on demand, then merge them into the open form.
+      void ensureEntryPhotos(e.id).then(async () => {
+        const rows = await db.photos.where('entryId').equals(e.id).toArray()
+        setPhotos((current) => {
+          const unsaved = current.filter((photo) => !photo.persisted)
+          const downloaded = rows
+            .filter((photo) => !removedPhotoIdsRef.current.has(photo.id))
+            .map((p) => {
+              const exact = e.itemDetails?.flatMap((detail, index) =>
+                detail.photoIds.includes(p.id) ? [index] : [],
+              ) ?? []
+              const representative = e.itemDetails?.flatMap((detail, index) =>
+                detail.representativePhotoIds.includes(p.id) ? [index] : [],
+              ) ?? []
+              return {
+                id: p.id,
+                blob: photoBlob(p),
+                width: p.width,
+                height: p.height,
+                persisted: true,
+                itemIndexes: exact.length > 0 ? exact : representative.length > 0 ? representative : e.tagNumbers.map((_, i) => i),
+                representative: representative.length > 0 || !e.itemDetails,
+              }
+            })
+          const byId = new Map(downloaded.map((photo) => [photo.id, photo]))
+          for (const photo of unsaved) byId.set(photo.id, photo)
+          return [...byId.values()]
+        })
+      })
     }
     setLoaded(true)
   }, [ctx, loaded])
@@ -284,7 +317,7 @@ export default function EntryPage() {
 
   // Live tag preview: allocate the next free sequence numbers for this room.
   useEffect(() => {
-    if (!ctx?.room || !ctx.floor || manualTags || notPresent) return
+    if (!loaded || !ctx?.room || !ctx.floor || manualTags || notPresent) return
     let cancelled = false
     void allocateTagNumbers({
       roomId: ctx.room.id,
@@ -294,13 +327,14 @@ export default function EntryPage() {
       blockCode: ctx.block?.code,
       quantity,
       keepEntryId: ctx.existing?.id,
+      keepTagNumbers: preferredAutoTags ?? undefined,
     }).then((tags) => {
       if (!cancelled) setTagDraft(tags)
     })
     return () => {
       cancelled = true
     }
-  }, [ctx?.room, ctx?.floor, ctx?.block?.code, ctx?.existing?.id, assetCode, quantity, manualTags, notPresent])
+  }, [loaded, ctx?.room, ctx?.floor, ctx?.block?.code, ctx?.existing?.id, assetCode, quantity, manualTags, notPresent, preferredAutoTags])
 
   const previews = useMemo(() => photos.map((p) => ({
     id: p.id,
@@ -356,7 +390,86 @@ export default function EntryPage() {
 
   function setQty(next: number) {
     const q = Math.max(0, Math.min(9999, Math.round(next)))
-    setQuantity(q === 0 ? 1 : q)
+    const nextQuantity = q === 0 ? 1 : q
+    setPreferredAutoTags(null)
+    if (nextQuantity < quantity) {
+      const removed = photos.filter((photo) =>
+        photo.itemIndexes.length > 0 && photo.itemIndexes.every((itemIndex) => itemIndex >= nextQuantity),
+      )
+      rememberRemovedPhotos(removed)
+      const removedIds = new Set(removed.map((photo) => photo.id))
+      setPhotos((current) => current
+        .filter((photo) => !removedIds.has(photo.id))
+        .map((photo) => ({ ...photo, itemIndexes: photo.itemIndexes.filter((itemIndex) => itemIndex < nextQuantity) })))
+      setUnitDetails((current) => current.slice(0, nextQuantity))
+      setSerials((current) => current.slice(0, nextQuantity))
+      setTagDraft((current) => current.slice(0, nextQuantity))
+      setSelectedUnits((current) => new Set([...current].filter((itemIndex) => itemIndex < nextQuantity)))
+      setSourceUnit((current) => Math.min(current, nextQuantity - 1))
+      if (splitCondition) {
+        setBreakdown((current) => {
+          const trimmed = { ...current }
+          let toRemove = quantity - nextQuantity
+          for (const bucket of [condition, ...CONDITIONS.filter((candidate) => candidate !== condition)]) {
+            const amount = Math.min(toRemove, trimmed[bucket] ?? 0)
+            if (amount > 0) trimmed[bucket] = (trimmed[bucket] ?? 0) - amount
+            toRemove -= amount
+            if (toRemove === 0) break
+          }
+          return trimmed
+        })
+      }
+    }
+    setQuantity(nextQuantity)
+  }
+
+  function rememberRemovedPhotos(candidates: DraftPhoto[]) {
+    const persistedIds = candidates.filter((photo) => photo.persisted).map((photo) => photo.id)
+    if (persistedIds.length === 0) return
+    persistedIds.forEach((id) => removedPhotoIdsRef.current.add(id))
+    setRemovedPhotoIds((current) => [...new Set([...current, ...persistedIds])])
+  }
+
+  function removeUnit(index: number) {
+    if (quantity <= 1 || index < 0 || index >= quantity) return
+
+    const removedPhotos = photos.filter((photo) =>
+      photo.itemIndexes.includes(index) && photo.itemIndexes.every((itemIndex) => itemIndex === index),
+    )
+    const removedIds = new Set(removedPhotos.map((photo) => photo.id))
+    rememberRemovedPhotos(removedPhotos)
+    setPhotos((current) => current
+      .filter((photo) => !removedIds.has(photo.id))
+      .map((photo) => ({
+        ...photo,
+        itemIndexes: photo.itemIndexes
+          .filter((itemIndex) => itemIndex !== index)
+          .map((itemIndex) => itemIndex > index ? itemIndex - 1 : itemIndex),
+      })))
+    setUnitDetails((current) => current.filter((_, itemIndex) => itemIndex !== index))
+    setSerials((current) => current.filter((_, itemIndex) => itemIndex !== index))
+    const remainingTags = tagDraft.filter((_, itemIndex) => itemIndex !== index)
+    setTagDraft(remainingTags)
+    setPreferredAutoTags(remainingTags.length > 0 ? remainingTags : null)
+    setSelectedUnits((current) => new Set(
+      [...current]
+        .filter((itemIndex) => itemIndex !== index)
+        .map((itemIndex) => itemIndex > index ? itemIndex - 1 : itemIndex),
+    ))
+    setSourceUnit((current) => current === index
+      ? Math.max(0, index - 1)
+      : current > index ? current - 1 : current)
+    if (splitCondition) {
+      setBreakdown((current) => {
+        const next = { ...current }
+        const bucket = (next[condition] ?? 0) > 0
+          ? condition
+          : CONDITIONS.find((candidate) => (next[candidate] ?? 0) > 0)
+        if (bucket) next[bucket] = Math.max(0, (next[bucket] ?? 0) - 1)
+        return next
+      })
+    }
+    setQuantity((current) => Math.max(1, current - 1))
   }
 
   function photoAssignment(): { itemIndexes: number[]; representative: boolean } {
@@ -418,7 +531,8 @@ export default function EntryPage() {
 
   function removePhoto(id: string) {
     setPhotos((prev) => prev.filter((p) => p.id !== id))
-    setRemovedPhotoIds((prev) => (photos.find((p) => p.id === id)?.persisted ? [...prev, id] : prev))
+    const removed = photos.find((photo) => photo.id === id)
+    if (removed) rememberRemovedPhotos([removed])
   }
 
   function currentSnapshot(): FormSnapshot {
@@ -618,6 +732,7 @@ export default function EntryPage() {
         inspectorId: inspector.id,
         notPresent,
         manualTagNumbers: notPresent ? [] : manualTags ? tagDraft : undefined,
+        preferredTagNumbers: notPresent || manualTags ? undefined : (preferredAutoTags ?? undefined),
         photoIds: photos.map((p) => p.id),
       })
 
@@ -639,6 +754,7 @@ export default function EntryPage() {
       if (removedPhotoIds.length > 0) await db.photos.bulkDelete(removedPhotoIds)
       setPhotos((prev) => prev.map((p) => ({ ...p, persisted: true })))
       setRemovedPhotoIds([])
+      removedPhotoIdsRef.current.clear()
       return true
     } catch (err) {
       if (err instanceof ValidationError) setError(err.message as StringKey)
@@ -1314,6 +1430,17 @@ export default function EntryPage() {
                         </svg>
                         {t('entry.takePhoto')}
                       </button>
+                      {quantity > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeUnit(index)}
+                          aria-label={t('entry.removeItem', { n: index + 1 })}
+                          title={t('entry.removeItem', { n: index + 1 })}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-50 text-lg font-bold leading-none text-red-600 active:bg-red-100"
+                        >
+                          &times;
+                        </button>
+                      )}
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <Field label={t('entry.brand')}>

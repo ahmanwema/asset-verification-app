@@ -73,13 +73,16 @@ export async function allocateTagNumbers(opts: {
   blockCode?: string
   quantity: number
   keepEntryId?: string
+  /** When removing one item, keep these exact labels instead of the first N. */
+  keepTagNumbers?: string[]
 }): Promise<string[]> {
-  const { roomId, assetCode, floorCode, roomCode, blockCode, quantity, keepEntryId } = opts
+  const { roomId, assetCode, floorCode, roomCode, blockCode, quantity, keepEntryId, keepTagNumbers } = opts
   if (quantity <= 0) return []
 
   const entries = await db.entries.where('roomId').equals(roomId).toArray()
   const used = new Set<number>()
   let keep: string[] = []
+  const requested = keepTagNumbers ? new Set(keepTagNumbers) : null
 
   for (const e of entries) {
     if (e.deleted) continue
@@ -87,7 +90,7 @@ export async function allocateTagNumbers(opts: {
     for (const tag of e.tagNumbers) {
       const parsed = parseTag(tag)
       if (!parsed || parsed.assetCode !== assetCode) continue
-      if (mine) keep.push(tag)
+      if (mine && (!requested || requested.has(tag))) keep.push(tag)
       else used.add(parsed.seq)
     }
   }

@@ -42,6 +42,8 @@ export interface EntryDraft {
   notPresent: boolean
   /** Manual tag numbers override auto-generation when provided. */
   manualTagNumbers?: string[]
+  /** Existing auto labels to retain when one specific item is removed. */
+  preferredTagNumbers?: string[]
   photoIds?: string[]
   itemDetails?: Array<Omit<ItemDetail, 'tagNumber'>>
 }
@@ -159,7 +161,7 @@ export async function saveEntry(draft: EntryDraft): Promise<InspectionEntry> {
   const block = effectiveBlockId ? await db.blocks.get(effectiveBlockId) : undefined
 
   const tagNumbers = draft.manualTagNumbers?.length
-    ? draft.manualTagNumbers.map((t) => t.trim().toUpperCase()).filter(Boolean)
+    ? draft.manualTagNumbers.map((t) => t.trim().toUpperCase()).filter(Boolean).slice(0, quantity)
     : await allocateTagNumbers({
         roomId: draft.room.id,
         assetCode,
@@ -168,6 +170,7 @@ export async function saveEntry(draft: EntryDraft): Promise<InspectionEntry> {
         blockCode: block?.code,
         quantity,
         keepEntryId: id,
+        keepTagNumbers: draft.preferredTagNumbers,
       })
 
   const itemDetails: ItemDetail[] = tagNumbers.map((tagNumber, index) => {
