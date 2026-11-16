@@ -149,13 +149,18 @@ export async function collectLabels(opts: {
       const photoIds = [...new Set([...detail.photoIds, ...detail.representativePhotoIds])]
       const parsed = parseTag(tag)
       const tagMatchesLocation = Boolean(
-        parsed && floor && room && tag.trim().toUpperCase() === formatTag(
-          assetCode,
-          floor.code.trim().toUpperCase(),
-          room.code.trim().toUpperCase(),
-          parsed.seq,
-          block?.code.trim().toUpperCase(),
-        ),
+        e.acceptedTagNumbers?.includes(tag) ||
+        (parsed &&
+          floor &&
+          room &&
+          tag.trim().toUpperCase() ===
+            formatTag(
+              assetCode,
+              floor.code.trim().toUpperCase(),
+              room.code.trim().toUpperCase(),
+              parsed.seq,
+              block?.code.trim().toUpperCase(),
+            )),
       )
       labels.push({
         tag,

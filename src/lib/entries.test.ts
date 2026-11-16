@@ -5,11 +5,13 @@ import {
   ConversionError,
   EDIT_HISTORY_LIMIT,
   MoveEntriesError,
+  RetagRoomError,
   ValidationError,
   convertToAssetType,
   deleteEntry,
   markNotPresent,
   moveEntriesToRoom,
+  planRoomTagNames,
   retagRoomEntries,
   reopenRoom,
   resolveConflict,
@@ -301,6 +303,42 @@ describe('moving recorded items between rooms', () => {
       changedEntries: 0,
       changedTags: 0,
     })
+  })
+
+  it('updates only selected tags and accepts a manually improved tag name', async () => {
+    const chair = await saveEntry(draft({ quantity: 3 }))
+    await moveEntriesToRoom({
+      sourceRoomId: fx.room.id,
+      targetRoomId: fx.room2.id,
+      entryIds: [chair.id],
+      actorId: fx.inspector.id,
+    })
+    const plan = await planRoomTagNames(fx.room2.id)
+    expect(plan).toHaveLength(3)
+
+    const selected = { ...plan[1], proposedTag: 'SC-1F-P4-SCHOOL-002' }
+    const result = await retagRoomEntries({
+      roomId: fx.room2.id,
+      actorId: fx.inspector2.id,
+      changes: [selected],
+    })
+    expect(result).toEqual({ changedEntries: 1, changedTags: 1 })
+
+    const updated = (await db.entries.get(chair.id))!
+    expect(updated.tagNumbers).toEqual([
+      chair.tagNumbers[0],
+      'SC-1F-P4-SCHOOL-002',
+      chair.tagNumbers[2],
+    ])
+    expect(updated.itemDetails?.map((detail) => detail.tagNumber)).toEqual(updated.tagNumbers)
+    expect(updated.acceptedTagNumbers).toContain('SC-1F-P4-SCHOOL-002')
+    expect(await planRoomTagNames(fx.room2.id)).toHaveLength(2)
+
+    await expect(retagRoomEntries({
+      roomId: fx.room2.id,
+      actorId: fx.inspector.id,
+      changes: [{ ...plan[0], proposedTag: chair.tagNumbers[2] }],
+    })).rejects.toBeInstanceOf(RetagRoomError)
   })
 
   it('moves every selected card together', async () => {

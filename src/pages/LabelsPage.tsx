@@ -13,7 +13,7 @@ import {
   type LabelSearchTerm,
 } from '../lib/labels'
 import { photoBlob } from '../lib/photos'
-import { retagRoomEntries } from '../lib/entries'
+import { planRoomTagNames, retagRoomEntries, type RoomTagChange } from '../lib/entries'
 import { ensureEntryPhotos } from '../lib/sync'
 import { useSession } from '../state/session'
 import { useT } from '../i18n'
@@ -34,6 +34,11 @@ import {
 type PhotoFilter = 'all' | 'with' | 'without'
 
 const MAX_VISIBLE = 200
+
+interface EditableTagChange extends RoomTagChange {
+  selected: boolean
+  description: string
+}
 
 // Several labels can belong to one inspection entry. Keep their initial photo
 // request shared so a quantity of 50 does not start 50 identical downloads.
@@ -62,7 +67,9 @@ export default function LabelsPage() {
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [selected, setSelected] = useState<LabelData | null>(null)
-  const [retagRoom, setRetagRoom] = useState<{ id: string; name: string; count: number } | null>(null)
+  const [retagRoom, setRetagRoom] = useState<{ id: string; name: string } | null>(null)
+  const [tagChanges, setTagChanges] = useState<EditableTagChange[]>([])
+  const [retagError, setRetagError] = useState<string | null>(null)
 
   const floors = useLiveQuery(async () => {
     if (!exercise) return []
@@ -124,6 +131,10 @@ export default function LabelsPage() {
   }, [sheet])
 
   const hasFilters = Boolean(query.trim() || searchTerms.length || condition || photoFilter !== 'all')
+  const selectedTagChanges = tagChanges.filter((change) => change.selected)
+  const selectedTagNames = selectedTagChanges.map((change) => change.proposedTag.trim().toUpperCase())
+  const tagChangesInvalid = selectedTagNames.some((tag) => !tag || /\s/.test(tag)) ||
+    new Set(selectedTagNames).size !== selectedTagNames.length
 
   if (!exercise) return <EmptyState title={t('common.empty')} />
 
@@ -141,17 +152,44 @@ export default function LabelsPage() {
     }
   }
 
-  async function updateRoomTagNames() {
-    if (!retagRoom || !inspector) return
+  async function openTagNameEditor(id: string, name: string) {
     setBusy(true)
+    setRetagError(null)
     try {
-      const result = await retagRoomEntries({ roomId: retagRoom.id, actorId: inspector.id })
-      setRetagRoom(null)
-      setToast(t('labels.tagNamesUpdated', { n: result.changedTags, room: retagRoom.name }))
-      setTimeout(() => setToast(null), 2600)
+      const plan = await planRoomTagNames(id)
+      const labelByTag = new Map((sheet?.labels ?? []).map((label) => [`${label.entryId}\u0000${label.tag}`, label]))
+      setTagChanges(plan.map((change) => ({
+        ...change,
+        selected: true,
+        description: labelByTag.get(`${change.entryId}\u0000${change.currentTag}`)?.description ?? '',
+      })))
+      setRetagRoom({ id, name })
     } catch {
       setToast(t('labels.tagNamesFailed'))
       setTimeout(() => setToast(null), 2600)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function updateRoomTagNames() {
+    if (!retagRoom || !inspector) return
+    const selectedChanges = selectedTagChanges
+    if (selectedChanges.length === 0) return
+    setBusy(true)
+    setRetagError(null)
+    try {
+      const result = await retagRoomEntries({
+        roomId: retagRoom.id,
+        actorId: inspector.id,
+        changes: selectedChanges,
+      })
+      setRetagRoom(null)
+      setTagChanges([])
+      setToast(t('labels.tagNamesUpdated', { n: result.changedTags, room: retagRoom.name }))
+      setTimeout(() => setToast(null), 2600)
+    } catch {
+      setRetagError(t('labels.tagNamesFailed'))
     } finally {
       setBusy(false)
     }
@@ -364,11 +402,8 @@ export default function LabelsPage() {
                     {inspector?.role === 'admin' && (mismatchedTagsByRoom.get(group.roomId) ?? 0) > 0 && (
                       <button
                         type="button"
-                        onClick={() => setRetagRoom({
-                          id: group.roomId,
-                          name: group.room,
-                          count: mismatchedTagsByRoom.get(group.roomId) ?? 0,
-                        })}
+                        onClick={() => void openTagNameEditor(group.roomId, group.room)}
+                        disabled={busy}
                         className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-800 hover:bg-amber-100"
                       >
                         {t('labels.updateTagNames')}
@@ -439,20 +474,118 @@ export default function LabelsPage() {
       <LabelPhotoSheet label={selected} onClose={() => setSelected(null)} />
       <Sheet
         open={Boolean(retagRoom)}
-        onClose={() => setRetagRoom(null)}
+        onClose={() => {
+          setRetagRoom(null)
+          setTagChanges([])
+          setRetagError(null)
+        }}
         title={t('labels.updateTagNamesTitle')}
       >
-        <div className="space-y-4">
+        <div className="max-h-[calc(100dvh-7rem)] space-y-4 overflow-y-auto pr-1">
           <p className="text-sm text-slate-700">
-            {t('labels.updateTagNamesConfirm', { n: retagRoom?.count ?? 0, room: retagRoom?.name ?? '' })}
+            {t('labels.updateTagNamesConfirm', { n: tagChanges.length, room: retagRoom?.name ?? '' })}
           </p>
           <p className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900">{t('labels.updateTagNamesHint')}</p>
+
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-semibold text-slate-500">
+              {t('labels.tagSelectionCount', {
+                selected: selectedTagChanges.length,
+                total: tagChanges.length,
+              })}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                const select = !tagChanges.every((change) => change.selected)
+                setTagChanges((current) => current.map((change) => ({ ...change, selected: select })))
+                setRetagError(null)
+              }}
+              className="text-xs font-bold text-brand-700"
+            >
+              {tagChanges.every((change) => change.selected)
+                ? t('labels.clearTagSelection')
+                : t('labels.selectAllTags')}
+            </button>
+          </div>
+
+          <div className="max-h-[50dvh] space-y-2 overflow-y-auto pr-1">
+            {tagChanges.map((change, index) => (
+              <div
+                key={`${change.entryId}:${change.currentTag}`}
+                className={`rounded-xl border p-3 ${
+                  change.selected ? 'border-brand-300 bg-brand-50/50' : 'border-slate-200 bg-white'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={change.selected}
+                    onChange={(event) => {
+                      const selected = event.target.checked
+                      setTagChanges((current) => current.map((candidate, candidateIndex) =>
+                        candidateIndex === index ? { ...candidate, selected } : candidate,
+                      ))
+                      setRetagError(null)
+                    }}
+                    className="mt-1 h-5 w-5 shrink-0 accent-brand-700"
+                    aria-label={t('labels.selectTagForUpdate', { tag: change.currentTag })}
+                  />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div>
+                      <p className="truncate font-mono text-xs font-bold text-slate-800">{change.currentTag}</p>
+                      {change.description && (
+                        <p className="truncate text-[11px] text-slate-500">{change.description}</p>
+                      )}
+                    </div>
+                    <TextInput
+                      value={change.proposedTag}
+                      onChange={(event) => {
+                        const proposedTag = event.target.value.toUpperCase()
+                        setTagChanges((current) => current.map((candidate, candidateIndex) =>
+                          candidateIndex === index ? { ...candidate, proposedTag, selected: true } : candidate,
+                        ))
+                        setRetagError(null)
+                      }}
+                      disabled={!change.selected}
+                      aria-label={t('labels.newTagNameFor', { tag: change.currentTag })}
+                      autoComplete="off"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {retagError && (
+            <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-700">{retagError}</p>
+          )}
           <div className="flex gap-2">
-            <Button variant="secondary" full onClick={() => setRetagRoom(null)} disabled={busy}>
+            <Button
+              variant="secondary"
+              full
+              onClick={() => {
+                setRetagRoom(null)
+                setTagChanges([])
+                setRetagError(null)
+              }}
+              disabled={busy}
+            >
               {t('common.cancel')}
             </Button>
-            <Button full onClick={() => void updateRoomTagNames()} disabled={busy || !retagRoom}>
-              {t('labels.updateTagNamesAction')}
+            <Button
+              full
+              onClick={() => void updateRoomTagNames()}
+              disabled={
+                busy ||
+                !retagRoom ||
+                selectedTagChanges.length === 0 ||
+                tagChangesInvalid
+              }
+            >
+              {t('labels.updateSelectedTagNames', {
+                n: selectedTagChanges.length,
+              })}
             </Button>
           </div>
         </div>

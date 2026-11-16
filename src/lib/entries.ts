@@ -201,6 +201,7 @@ export async function saveEntry(draft: EntryDraft): Promise<InspectionEntry> {
     model: itemDetails[0]?.model ?? draft.model.trim(),
     brand: itemDetails[0]?.brand ?? draft.brand.trim(),
     tagNumbers,
+    acceptedTagNumbers: existing?.acceptedTagNumbers?.filter((tag) => tagNumbers.includes(tag)),
     condition: draft.condition,
     conditionBreakdown:
       !draft.notPresent && draft.conditionBreakdown && Object.keys(draft.conditionBreakdown).length > 0
@@ -406,6 +407,7 @@ export async function moveEntriesToRoom(opts: {
     const moved = entries.map((entry) => ({
       ...entry,
       roomId: targetRoom.id,
+      acceptedTagNumbers: undefined,
       expectedRoomId: entry.expectedRoomId === targetRoom.id ? undefined : entry.expectedRoomId,
       editHistory: [
         ...(entry.editHistory ?? []),
@@ -442,17 +444,16 @@ export async function moveEntriesToRoom(opts: {
 
 export class RetagRoomError extends Error {}
 
-/**
- * Reissues every mismatched tag in a room using that room's current location
- * codes. Tags that already match the room are kept, while per-item details and
- * financial records follow any tag that changes.
- */
-export async function retagRoomEntries(opts: {
-  roomId: string
-  actorId: string
-}): Promise<{ changedEntries: number; changedTags: number }> {
-  return db.transaction('rw', db.rooms, db.floors, db.blocks, db.assetTypes, db.entries, async () => {
-    const room = await db.rooms.get(opts.roomId)
+export interface RoomTagChange {
+  entryId: string
+  currentTag: string
+  proposedTag: string
+}
+
+/** Builds conflict-free destination tag names without changing any data. */
+export async function planRoomTagNames(roomId: string): Promise<RoomTagChange[]> {
+  return db.transaction('r', db.rooms, db.floors, db.blocks, db.assetTypes, db.entries, async () => {
+    const room = await db.rooms.get(roomId)
     if (!room) throw new RetagRoomError('room-not-found')
     const floor = await db.floors.get(room.floorId)
     if (!floor) throw new RetagRoomError('floor-not-found')
@@ -488,6 +489,12 @@ export async function retagRoomEntries(opts: {
       entry.tagNumbers.forEach((rawTag, index) => {
         const tag = rawTag.trim().toUpperCase()
         const parsed = parseTag(tag)
+        if (entry.acceptedTagNumbers?.includes(rawTag) && !assignedTags.has(tag) && !outsideTags.has(tag)) {
+          if (parsed?.assetCode === assetCode) used.add(parsed.seq)
+          assignedTags.add(tag)
+          retained.set(index, tag)
+          return
+        }
         if (!parsed) return
         const expected = formatTag(assetCode, floorCode, roomCode, parsed.seq, blockCode)
         if (tag !== expected || used.has(parsed.seq) || assignedTags.has(tag) || outsideTags.has(tag)) return
@@ -498,18 +505,16 @@ export async function retagRoomEntries(opts: {
       retainedByEntry.set(entry.id, retained)
     }
 
-    const updatedAt = Date.now()
-    let changedTags = 0
-    const updatedEntries: InspectionEntry[] = []
+    const changes: RoomTagChange[] = []
     for (const entry of entries) {
       const assetCode = assetCodeFor(entry, assetTypeById.get(entry.assetTypeId ?? '')).trim().toUpperCase()
       const used = usedSequences.get(assetCode) ?? new Set<number>()
       usedSequences.set(assetCode, used)
       const retained = retainedByEntry.get(entry.id) ?? new Map<number, string>()
       let nextSequence = 1
-      const newTags = entry.tagNumbers.map((oldTag, index) => {
+      entry.tagNumbers.forEach((oldTag, index) => {
         const kept = retained.get(index)
-        if (kept) return kept
+        if (kept) return
         let candidate = ''
         while (!candidate) {
           if (nextSequence > 9999) throw new RetagRoomError('tag-limit')
@@ -521,18 +526,100 @@ export async function retagRoomEntries(opts: {
           }
           nextSequence += 1
         }
-        if (candidate !== oldTag) changedTags += 1
-        return candidate
+        if (candidate !== oldTag) {
+          changes.push({ entryId: entry.id, currentTag: oldTag, proposedTag: candidate })
+        }
       })
-      if (newTags.every((tag, index) => tag === entry.tagNumbers[index])) continue
+    }
+    return changes
+  })
+}
 
-      const replacements = new Map(entry.tagNumbers.map((tag, index) => [tag, newTags[index]]))
+/**
+ * Applies all proposed room tag changes, or only the explicitly selected and
+ * manually edited changes supplied by the caller.
+ */
+export async function retagRoomEntries(opts: {
+  roomId: string
+  actorId: string
+  changes?: RoomTagChange[]
+}): Promise<{ changedEntries: number; changedTags: number }> {
+  const requested = opts.changes ?? await planRoomTagNames(opts.roomId)
+  if (requested.length === 0) return { changedEntries: 0, changedTags: 0 }
+
+  return db.transaction('rw', db.rooms, db.entries, async () => {
+    const room = await db.rooms.get(opts.roomId)
+    if (!room) throw new RetagRoomError('room-not-found')
+    const allEntries = await db.entries.where('exerciseId').equals(room.exerciseId).toArray()
+    const liveEntries = allEntries.filter((entry) => !entry.deleted)
+    const entryById = new Map(liveEntries.map((entry) => [entry.id, entry]))
+    const normalized: RoomTagChange[] = []
+    const requestKeys = new Set<string>()
+    const selectedKeys = new Set<string>()
+
+    for (const change of requested) {
+      const entry = entryById.get(change.entryId)
+      const newTag = change.proposedTag.trim().toUpperCase()
+      const key = `${change.entryId}\u0000${change.currentTag}`
+      if (
+        !entry ||
+        entry.roomId !== room.id ||
+        entry.tagNumbers.filter((tag) => tag === change.currentTag).length !== 1 ||
+        !newTag ||
+        newTag.length > 80 ||
+        /\s/.test(newTag) ||
+        requestKeys.has(key)
+      ) {
+        throw new RetagRoomError('invalid-change')
+      }
+      requestKeys.add(key)
+      if (newTag !== change.currentTag) {
+        selectedKeys.add(key)
+        normalized.push({ ...change, proposedTag: newTag })
+      }
+    }
+    if (normalized.length === 0) return { changedEntries: 0, changedTags: 0 }
+
+    // A selected old tag is being replaced, so it may be reused. Every other
+    // live tag remains occupied and cannot be chosen manually.
+    const occupied = new Set<string>()
+    for (const entry of liveEntries) {
+      for (const tag of entry.tagNumbers) {
+        if (!selectedKeys.has(`${entry.id}\u0000${tag}`)) occupied.add(tag.trim().toUpperCase())
+      }
+    }
+    const newTags = new Set<string>()
+    for (const change of normalized) {
+      if (occupied.has(change.proposedTag) || newTags.has(change.proposedTag)) {
+        throw new RetagRoomError('duplicate-tag')
+      }
+      newTags.add(change.proposedTag)
+    }
+
+    const changesByEntry = new Map<string, Map<string, string>>()
+    for (const change of normalized) {
+      const replacements = changesByEntry.get(change.entryId) ?? new Map<string, string>()
+      replacements.set(change.currentTag, change.proposedTag)
+      changesByEntry.set(change.entryId, replacements)
+    }
+
+    const updatedAt = Date.now()
+    const updatedEntries: InspectionEntry[] = []
+    for (const [entryId, replacements] of changesByEntry) {
+      const entry = entryById.get(entryId)!
+      const tags = entry.tagNumbers.map((tag) => replacements.get(tag) ?? tag)
       updatedEntries.push({
         ...entry,
-        tagNumbers: newTags,
-        itemDetails: entry.itemDetails?.map((detail, index) => ({
+        tagNumbers: tags,
+        acceptedTagNumbers: [
+          ...new Set([
+            ...(entry.acceptedTagNumbers ?? []).filter((tag) => !replacements.has(tag)),
+            ...replacements.values(),
+          ]),
+        ],
+        itemDetails: entry.itemDetails?.map((detail) => ({
           ...detail,
-          tagNumber: newTags[index] ?? replacements.get(detail.tagNumber) ?? detail.tagNumber,
+          tagNumber: replacements.get(detail.tagNumber) ?? detail.tagNumber,
         })),
         financialRecords: entry.financialRecords?.map((record) => ({
           ...record,
@@ -543,7 +630,7 @@ export async function retagRoomEntries(opts: {
           {
             field: 'tagNumbers',
             oldValue: entry.tagNumbers.join(', '),
-            newValue: newTags.join(', '),
+            newValue: tags.join(', '),
             editedBy: opts.actorId,
             editedAt: updatedAt,
           },
@@ -553,8 +640,8 @@ export async function retagRoomEntries(opts: {
       })
     }
 
-    if (updatedEntries.length > 0) await db.entries.bulkPut(updatedEntries)
-    return { changedEntries: updatedEntries.length, changedTags }
+    await db.entries.bulkPut(updatedEntries)
+    return { changedEntries: updatedEntries.length, changedTags: normalized.length }
   })
 }
 

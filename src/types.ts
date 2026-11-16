@@ -149,6 +149,8 @@ export interface InspectionEntry {
   model: string
   brand: string
   tagNumbers: string[]
+  /** Explicitly accepted custom tag names for this room. */
+  acceptedTagNumbers?: string[]
   condition: Condition
   /** Set when the quantity splits across conditions, e.g. { G: 28, P: 2 }. */
   conditionBreakdown?: ConditionBreakdown

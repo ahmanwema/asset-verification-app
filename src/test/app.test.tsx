@@ -478,14 +478,22 @@ describe('moving recorded items to the correct room', () => {
     expect(await screen.findByText('SC-MAIN-1F-P3-001')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Update tag names' }))
     const retagDialog = await screen.findByRole('dialog', { name: 'Match tags to this room' })
-    expect(within(retagDialog).getByText(/current room code for P4/i)).toBeTruthy()
-    fireEvent.click(within(retagDialog).getByRole('button', { name: 'Update tag names' }))
+    expect(within(retagDialog).getByText(/select only the products you want to update/i)).toBeTruthy()
+    fireEvent.click(within(retagDialog).getByRole('button', { name: 'Clear selection' }))
+    fireEvent.click(within(retagDialog).getByLabelText('Select SC-MAIN-1F-P3-001 to update'))
+    fireEvent.change(within(retagDialog).getByLabelText('New tag name for SC-MAIN-1F-P3-001'), {
+      target: { value: 'SC-MAIN-1F-P4-SCHOOL-001' },
+    })
+    fireEvent.click(within(retagDialog).getByRole('button', { name: 'Update 1 selected' }))
 
-    expect(await screen.findByText('SC-MAIN-1F-P4-001')).toBeTruthy()
+    expect(await screen.findByText('SC-MAIN-1F-P4-SCHOOL-001')).toBeTruthy()
     expect(screen.queryByText('SC-MAIN-1F-P3-001')).toBeNull()
+    expect(screen.getByText('SC-MAIN-1F-P3-002')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Update tag names' })).toBeTruthy()
     await waitFor(async () => {
       const movedChair = await db.entries.filter((entry) => entry.quantity === 3).first()
       expect(movedChair?.itemDetails?.map((detail) => detail.tagNumber)).toEqual(movedChair?.tagNumbers)
+      expect(movedChair?.acceptedTagNumbers).toContain('SC-MAIN-1F-P4-SCHOOL-001')
     })
   }, 20_000)
 })
