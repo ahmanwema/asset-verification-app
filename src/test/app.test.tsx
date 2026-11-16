@@ -476,8 +476,8 @@ describe('moving recorded items to the correct room', () => {
 
     fireEvent.click(screen.getByRole('link', { name: /labels/i }))
     expect(await screen.findByText('SC-MAIN-1F-P3-001')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Update tag names' }))
-    const retagDialog = await screen.findByRole('dialog', { name: 'Match tags to this room' })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tag names' }))
+    const retagDialog = await screen.findByRole('dialog', { name: 'Edit tag names' })
     expect(within(retagDialog).getByText(/select only the products you want to update/i)).toBeTruthy()
     fireEvent.click(within(retagDialog).getByRole('button', { name: 'Clear selection' }))
     fireEvent.click(within(retagDialog).getByLabelText('Select SC-MAIN-1F-P3-001 to update'))
@@ -489,7 +489,7 @@ describe('moving recorded items to the correct room', () => {
     expect(await screen.findByText('SC-MAIN-1F-P4-SCHOOL-001')).toBeTruthy()
     expect(screen.queryByText('SC-MAIN-1F-P3-001')).toBeNull()
     expect(screen.getByText('SC-MAIN-1F-P3-002')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Update tag names' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Edit tag names' })).toBeTruthy()
     await waitFor(async () => {
       const movedChair = await db.entries.filter((entry) => entry.quantity === 3).first()
       expect(movedChair?.itemDetails?.map((detail) => detail.tagNumber)).toEqual(movedChair?.tagNumbers)

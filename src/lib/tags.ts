@@ -33,6 +33,36 @@ export function formatTag(assetCode: string, floorCode: string, roomCode: string
   return `${assetCode}-${location}-${String(seq).padStart(3, '0')}`
 }
 
+/**
+ * Reissues selected tags with one asset code while keeping their locations.
+ * Sequences are allocated around every unselected/occupied tag, so changing
+ * CMP, MP2 and MP3 to MP cannot create three copies of MP-...-001.
+ */
+export function reissueTagsWithAssetCode(
+  tags: string[],
+  assetCode: string,
+  occupiedTags: string[] = [],
+): string[] | null {
+  const code = assetCode.trim().toUpperCase()
+  if (!/^[A-Z0-9]{1,6}$/.test(code)) return null
+  const parsed = tags.map(parseTag)
+  if (parsed.some((tag) => !tag)) return null
+
+  const occupied = new Set(occupiedTags.map((tag) => tag.trim().toUpperCase()))
+  return parsed.map((tag) => {
+    let sequence = 1
+    let candidate = ''
+    while (!candidate && sequence <= 9999) {
+      const next = formatTag(code, tag!.floorCode, tag!.roomCode, sequence, tag!.blockCode)
+      if (!occupied.has(next)) candidate = next
+      sequence += 1
+    }
+    if (!candidate) return ''
+    occupied.add(candidate)
+    return candidate
+  })
+}
+
 /** Builds a short uppercase code from a free-text name, for unlisted items. */
 export function deriveCode(name: string, maxLen = 3): string {
   const words = name

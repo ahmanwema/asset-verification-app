@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { resetDb, seedFixture, type Fixture } from '../test/fixtures'
-import { allocateTagNumbers, deriveCode, deriveRoomCode, formatTag, parseTag } from './tags'
+import { allocateTagNumbers, deriveCode, deriveRoomCode, formatTag, parseTag, reissueTagsWithAssetCode } from './tags'
 import { saveEntry } from './entries'
 import { db, uid } from '../db/db'
 
@@ -43,6 +43,25 @@ describe('tag format', () => {
     expect(deriveCode('Student Chair')).toBe('SC')
     expect(deriveRoomCode('P3')).toBe('P3')
     expect(deriveRoomCode('Lab Biology Office')).toBe('LBO')
+  })
+})
+
+describe('reissueTagsWithAssetCode', () => {
+  it('uses the next free sequence instead of creating duplicate tag names', () => {
+    expect(reissueTagsWithAssetCode(
+      ['CMP-AB-3F-CR-001', 'MP2-AB-3F-CR-001', 'MP3-AB-3F-CR-001'],
+      'MP',
+      ['MP-AB-3F-CR-001'],
+    )).toEqual([
+      'MP-AB-3F-CR-002',
+      'MP-AB-3F-CR-003',
+      'MP-AB-3F-CR-004',
+    ])
+  })
+
+  it('rejects an invalid code or a tag whose location cannot be parsed', () => {
+    expect(reissueTagsWithAssetCode(['CMP-AB-3F-CR-001'], 'MULTIPRINTER')).toBeNull()
+    expect(reissueTagsWithAssetCode(['custom tag'], 'MP')).toBeNull()
   })
 })
 
