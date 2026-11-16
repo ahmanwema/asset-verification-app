@@ -381,6 +381,9 @@ describe('label data', () => {
     expect(labelMatchesQuery(chair, 'P3, Student FURNICO')).toBe(true)
     expect(labelMatchesQuery(chair, 'p4 chair furnico')).toBe(false)
     expect(labelSearchSuggestions(sheet.labels, [], 'fur')).toEqual([{ field: 'brand', value: 'Furnico' }])
+    expect(labelSearchSuggestions([{ ...chair, block: 'Administration Block' }], [], 'admin')).toEqual([
+      { field: 'block', value: 'Administration Block' },
+    ])
     expect(labelSearchSuggestions(sheet.labels, [{ field: 'room', value: 'P3' }], 'stud')).toEqual([
       { field: 'description', value: 'Student Chair' },
     ])

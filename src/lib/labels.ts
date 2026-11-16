@@ -26,7 +26,7 @@ export interface LabelSheet {
   labels: LabelData[]
 }
 
-export type LabelSearchField = 'room' | 'description' | 'brand'
+export type LabelSearchField = 'block' | 'room' | 'description' | 'brand'
 
 export interface LabelSearchTerm {
   field: LabelSearchField
@@ -53,6 +53,7 @@ export function labelSearchSuggestions(
   for (const label of labels) {
     if (!labelMatchesSearchTerms(label, selected)) continue
     const candidates: LabelSearchTerm[] = [
+      { field: 'block', value: label.block },
       { field: 'room', value: label.room },
       { field: 'description', value: label.description },
       { field: 'brand', value: label.brand },

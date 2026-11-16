@@ -1144,6 +1144,10 @@ describe('finding labels before printing', () => {
 
     const search = screen.getByLabelText('Search')
     fireEvent.focus(search)
+    fireEvent.change(search, { target: { value: 'main' } })
+    fireEvent.click(await screen.findByRole('option', { name: /block.*main block/i }))
+    expect(screen.getByRole('button', { name: 'Remove Block: Main Block' })).toBeTruthy()
+
     fireEvent.change(search, { target: { value: 'p3' } })
     fireEvent.click(await screen.findByRole('option', { name: /room.*p3/i }))
     expect(screen.getByRole('button', { name: 'Remove Room: P3' })).toBeTruthy()

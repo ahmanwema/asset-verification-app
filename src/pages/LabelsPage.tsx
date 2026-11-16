@@ -127,6 +127,7 @@ export default function LabelsPage() {
   }
 
   function searchFieldLabel(field: LabelSearchField): string {
+    if (field === 'block') return t('labels.searchFieldBlock')
     if (field === 'room') return t('labels.searchFieldRoom')
     if (field === 'brand') return t('labels.searchFieldBrand')
     return t('labels.searchFieldAsset')
