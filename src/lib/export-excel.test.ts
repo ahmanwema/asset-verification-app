@@ -364,12 +364,16 @@ describe('edit log sheet', () => {
 describe('label data', () => {
   it('carries the entry id and condition so a label can show its photo', async () => {
     await populate()
-    const { collectLabels, labelTargetUrl } = await import('./labels')
+    const { collectLabels, labelMatchesQuery, labelTargetUrl } = await import('./labels')
     const sheet = await collectLabels({ exerciseId: fx.exercise.id, scope: 'exercise' })
 
     const chair = sheet.labels.find((l) => l.description === 'Student Chair')!
     expect(chair.entryId).toBeTruthy()
     expect(chair.condition).toBe('G')
+    expect(chair.brand).toBe('Furnico')
+    expect(labelMatchesQuery(chair, 'p3 chair furnico')).toBe(true)
+    expect(labelMatchesQuery(chair, 'P3, Student FURNICO')).toBe(true)
+    expect(labelMatchesQuery(chair, 'p4 chair furnico')).toBe(false)
 
     // Every tag of a multi-item entry points back at the same entry.
     const chairTags = sheet.labels.filter((l) => l.description === 'Student Chair')

@@ -26,6 +26,28 @@ export interface LabelSheet {
   labels: LabelData[]
 }
 
+/**
+ * Matches every search term independently, so one query can combine fields.
+ * For example, "Reception Mouse Logitech" can match room + item + brand.
+ */
+export function labelMatchesQuery(label: LabelData, query: string): boolean {
+  const terms = query.trim().toLocaleLowerCase().split(/[\s,]+/).filter(Boolean)
+  if (terms.length === 0) return true
+
+  const values = [
+    label.tag,
+    label.description,
+    label.block,
+    label.floor,
+    label.room,
+    label.serial,
+    label.brand,
+    label.model,
+  ].map((value) => value.toLocaleLowerCase())
+
+  return terms.every((term) => values.some((value) => value.includes(term)))
+}
+
 /** Gathers the tags to print for a room, a floor or the whole exercise. */
 export async function collectLabels(opts: {
   exerciseId: string
@@ -148,6 +170,7 @@ export async function renderLabelsHtml(sheet: LabelSheet, origin = 'http://local
           <div class="org">${escapeHtml(sheet.organization)}</div>
           <div class="tag">${escapeHtml(l.tag)}</div>
           <div class="desc">${escapeHtml(l.description)}</div>
+          ${l.brand ? `<div class="meta">Brand: ${escapeHtml(l.brand)}</div>` : ''}
           <div class="loc">${escapeHtml([l.block, l.floor, l.room].filter(Boolean).join(' · '))}</div>
           <div class="date">Verified ${escapeHtml(sheet.verifiedOn)}</div>
         </div>
@@ -175,6 +198,7 @@ export async function renderLabelsHtml(sheet: LabelSheet, origin = 'http://local
   .org { font-size: 5.5pt; text-transform: uppercase; letter-spacing: 0.2pt; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .tag { font-size: 10pt; font-weight: 700; font-family: ui-monospace, "Courier New", monospace; margin: 0.4mm 0; }
   .desc { font-size: 6.5pt; font-weight: 600; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .meta { font-size: 6pt; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .loc { font-size: 6pt; }
   .date { font-size: 5.5pt; color: #333; margin-top: 0.3mm; }
   .empty { padding: 20mm; text-align: center; font-size: 12pt; }

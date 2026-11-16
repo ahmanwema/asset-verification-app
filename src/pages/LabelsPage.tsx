@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
-import { collectLabels, printLabels, type LabelData, type LabelScope } from '../lib/labels'
+import { collectLabels, labelMatchesQuery, printLabels, type LabelData, type LabelScope } from '../lib/labels'
 import { photoBlob } from '../lib/photos'
 import { ensureEntryPhotos } from '../lib/sync'
 import { useSession } from '../state/session'
@@ -71,15 +71,11 @@ export default function LabelsPage() {
 
   const filteredLabels = useMemo(() => {
     if (!sheet) return []
-    const q = query.trim().toLowerCase()
     return sheet.labels.filter((label) => {
       if (condition && label.condition !== condition) return false
       if (photoFilter === 'with' && label.photoCount === 0) return false
       if (photoFilter === 'without' && label.photoCount > 0) return false
-      if (!q) return true
-      return [label.tag, label.description, label.block, label.floor, label.room, label.serial, label.brand, label.model].some((value) =>
-        value.toLowerCase().includes(q),
-      )
+      return labelMatchesQuery(label, query)
     })
   }, [sheet, query, condition, photoFilter])
 
@@ -192,6 +188,7 @@ export default function LabelsPage() {
             type="search"
           />
         </Field>
+        <p className="-mt-2 text-[11px] text-slate-500">{t('labels.searchHint')}</p>
 
         <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
           <span>{t('labels.showing', { shown: filteredLabels.length, total: sheet?.labels.length ?? 0 })}</span>
@@ -254,6 +251,11 @@ export default function LabelsPage() {
                           )}
                         </div>
                         <p className="truncate text-xs text-slate-600">{label.description}</p>
+                        {label.brand && (
+                          <p className="max-w-full truncate text-[11px] font-semibold text-brand-700">
+                            {t('entry.brand')}: {label.brand}
+                          </p>
+                        )}
                         {label.serial && <p className="truncate text-[11px] text-slate-400">{label.serial}</p>}
                         <span className={`chip mt-auto inline-block ${CONDITION_STYLE[label.condition].chip}`}>
                           {t(`condition.${label.condition}`)}
@@ -445,6 +447,11 @@ function LabelPhotoSheet({ label, onClose }: { label: LabelData | null; onClose:
       <div className="space-y-3">
         <div>
           <p className="font-semibold text-slate-900">{label.description}</p>
+          {label.brand && (
+            <p className="text-sm font-semibold text-brand-700">
+              {t('entry.brand')}: {label.brand}
+            </p>
+          )}
           <p className="text-xs text-slate-500">
             {[label.block, label.floor, label.room].filter(Boolean).join(' · ')}
             {label.serial ? ` · ${label.serial}` : ''}
