@@ -140,7 +140,8 @@ export const en = {
   'setup.startFreshConfirm':
     'Delete everything on this device and start from nothing? The sample exercise will not come back. This cannot be undone.',
 
-  'labels.tapForPhoto': 'Tap a tag to see the photo taken when it was recorded',
+  'labels.tapForPhoto': 'Photos appear below automatically. Tap a label to view all photos.',
+  'labels.photoPreview': '{item} photo',
   'labels.noPhoto': 'No photo was taken for this item',
 
   'register.title': 'Register an institution',
@@ -596,7 +597,8 @@ export const sw: Record<StringKey, string> = {
   'setup.startFreshConfirm':
     'Futa kila kitu kwenye kifaa hiki na uanze bila kitu? Sampuli haitarudi. Hatua hii hairudishwi.',
 
-  'labels.tapForPhoto': 'Gusa lebo kuona picha iliyopigwa wakati wa kurekodi',
+  'labels.tapForPhoto': 'Picha zinaonekana hapa chini moja kwa moja. Gusa lebo kuona picha zote.',
+  'labels.photoPreview': 'Picha ya {item}',
   'labels.noPhoto': 'Hakuna picha iliyopigwa kwa kifaa hiki',
 
   'register.title': 'Sajili taasisi',

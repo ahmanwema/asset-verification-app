@@ -1006,6 +1006,29 @@ describe('viewing a report before exporting it', () => {
 })
 
 describe('finding labels before printing', () => {
+  it('shows an asset photo in the label row without opening the label', async () => {
+    await signIn()
+
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText('P3'))
+    fireEvent.click(await screen.findByText('Student Chair'))
+
+    fireEvent.click(await screen.findByLabelText('Photo for item 1'))
+    const camera = document.querySelector(
+      'input[capture="environment"][multiple]',
+    ) as HTMLInputElement
+    fireEvent.change(camera, {
+      target: { files: [new File([new Uint8Array([1, 2, 3])], 'chair.jpg', { type: 'image/jpeg' })] },
+    })
+    expect(await screen.findByText('📷 1')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+    await screen.findByText('1/16 items checked', undefined, { timeout: 5000 })
+    fireEvent.click(screen.getByRole('link', { name: /labels/i }))
+
+    expect(await screen.findByRole('img', { name: 'Student Chair photo' })).toBeTruthy()
+  }, 10_000)
+
   it('searches and filters labels, grouped by their room', async () => {
     await signIn()
 

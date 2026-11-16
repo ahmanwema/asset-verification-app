@@ -24,6 +24,19 @@ type PhotoFilter = 'all' | 'with' | 'without'
 
 const MAX_VISIBLE = 200
 
+// Several labels can belong to one inspection entry. Keep their initial photo
+// request shared so a quantity of 50 does not start 50 identical downloads.
+const pendingPhotoLoads = new Map<string, Promise<number>>()
+
+function ensureLabelPhotos(entryId: string): Promise<number> {
+  const current = pendingPhotoLoads.get(entryId)
+  if (current) return current
+
+  const request = ensureEntryPhotos(entryId).finally(() => pendingPhotoLoads.delete(entryId))
+  pendingPhotoLoads.set(entryId, request)
+  return request
+}
+
 export default function LabelsPage() {
   const t = useT()
   const { exercise } = useSession()
@@ -233,6 +246,7 @@ export default function LabelsPage() {
                       onClick={() => setSelected(label)}
                       className="flex w-full items-center gap-3 px-3 py-2.5 text-left active:bg-slate-50"
                     >
+                      <LabelThumbnail label={label} />
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                           <span className="font-mono text-xs font-bold text-slate-900">{label.tag}</span>
@@ -277,6 +291,55 @@ export default function LabelsPage() {
 
       <LabelPhotoSheet label={selected} onClose={() => setSelected(null)} />
       <Toast message={toast} />
+    </div>
+  )
+}
+
+/** Displays the first photo for a label without requiring the row to be opened. */
+function LabelThumbnail({ label }: { label: LabelData }) {
+  const t = useT()
+  const photoIdsKey = label.photoIds.join('\u0000')
+
+  useEffect(() => {
+    if (label.photoIds.length > 0) void ensureLabelPhotos(label.entryId)
+  }, [label.entryId, photoIdsKey])
+
+  const photo = useLiveQuery(async () => {
+    if (label.photoIds.length === 0) return null
+    const candidates = await db.photos.bulkGet(label.photoIds)
+    return candidates.find((candidate) => candidate !== undefined) ?? null
+  }, [label.entryId, photoIdsKey])
+
+  const url = useMemo(() => (photo ? URL.createObjectURL(photoBlob(photo)) : ''), [photo])
+  useEffect(() => () => {
+    if (url) URL.revokeObjectURL(url)
+  }, [url])
+
+  return (
+    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100">
+      {url ? (
+        <img
+          src={url}
+          alt={t('labels.photoPreview', { item: label.description })}
+          className="h-full w-full object-cover"
+          loading="lazy"
+        />
+      ) : photo === undefined ? (
+        <span className="h-full w-full animate-pulse bg-slate-200" aria-hidden="true" />
+      ) : (
+        <svg
+          viewBox="0 0 24 24"
+          className="h-5 w-5 text-slate-300"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          aria-label={label.photoCount > 0 ? t('labels.photoPreview', { item: label.description }) : t('labels.noPhoto')}
+        >
+          <path d="M4 8.5A1.5 1.5 0 015.5 7H8l1-2h6l1 2h2.5A1.5 1.5 0 0120 8.5v8a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 16.5v-8z" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M9.5 12.5a2.5 2.5 0 105 0 2.5 2.5 0 00-5 0z" strokeLinecap="round" />
+          {label.photoCount === 0 && <path d="M5 19L19 5" strokeLinecap="round" />}
+        </svg>
+      )}
     </div>
   )
 }
