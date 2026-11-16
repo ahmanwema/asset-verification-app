@@ -419,8 +419,14 @@ describe('moving recorded items to the correct room', () => {
     expect(p4).toBeTruthy()
     const p4Floor = await db.floors.get(p4!.floorId)
     const p4Block = await db.blocks.get(p4!.blockId ?? p4Floor!.blockId!)
+    const p3 = await db.rooms.filter((room) => room.name === 'P3').first()
+    const lastDestinationRoom = (await db.rooms.where('floorId').equals(p4!.floorId).toArray())
+      .filter((room) => room.id !== p3!.id && (room.blockId ?? p4Floor!.blockId) === p4Block!.id)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .at(-1)
     expect(p4Floor).toBeTruthy()
     expect(p4Block).toBeTruthy()
+    expect(lastDestinationRoom).toBeTruthy()
 
     function chooseP4Destination(dialog: HTMLElement) {
       const blockSearch = within(dialog).getByPlaceholderText('Type or choose a block')
@@ -433,6 +439,9 @@ describe('moving recorded items to the correct room', () => {
       fireEvent.click(within(dialog).getByRole('button', { name: new RegExp(`${p4Floor!.name}$`) }))
       const roomSearch = within(dialog).getByPlaceholderText('Type or choose a room')
       fireEvent.focus(roomSearch)
+      expect(
+        within(dialog).getByRole('button', { name: new RegExp(`${lastDestinationRoom!.name}$`) }),
+      ).toBeTruthy()
       fireEvent.change(roomSearch, { target: { value: p4!.name } })
       fireEvent.click(within(dialog).getByRole('button', { name: new RegExp(`${p4!.name}$`) }))
     }

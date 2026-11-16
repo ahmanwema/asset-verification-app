@@ -139,13 +139,10 @@ export default function RoomPage() {
     `${name} ${code}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
   const moveBlockSuggestions = targetBlocks
     .filter((candidate) => matchesMoveQuery(candidate.name, candidate.code, moveBlockQuery))
-    .slice(0, 8)
   const moveFloorSuggestions = targetFloors
     .filter((candidate) => matchesMoveQuery(candidate.name, candidate.code, moveFloorQuery))
-    .slice(0, 8)
   const moveRoomSuggestions = destinationRooms
     .filter((candidate) => matchesMoveQuery(candidate.name, candidate.code, moveRoomQuery))
-    .slice(0, 8)
   const selectedMoveBlock = blockById.get(moveTargetBlockId)
   const selectedMoveFloor = floorById.get(moveTargetFloorId)
   const selectedMoveRoom = rooms.find((candidate) => candidate.id === moveTargetRoomId)
