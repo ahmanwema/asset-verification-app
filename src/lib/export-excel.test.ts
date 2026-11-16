@@ -387,6 +387,14 @@ describe('label data', () => {
     expect(labelSearchSuggestions(sheet.labels, [{ field: 'room', value: 'P3' }], 'stud')).toEqual([
       { field: 'description', value: 'Student Chair' },
     ])
+    const manyRooms = Array.from({ length: 12 }, (_, index) => ({
+      ...chair,
+      roomId: `room-${index}`,
+      room: `Room ${String(index + 1).padStart(2, '0')}`,
+    }))
+    expect(labelSearchSuggestions(manyRooms, [], '')).toHaveLength(12)
+    expect(labelSearchSuggestions(manyRooms, [], '').every((term) => term.field === 'room')).toBe(true)
+    expect(labelSearchSuggestions(manyRooms, [], 'room')).toHaveLength(12)
     expect(labelMatchesSearchTerms(chair, [
       { field: 'room', value: 'P3' },
       { field: 'description', value: 'Student Chair' },

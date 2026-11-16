@@ -47,36 +47,39 @@ export function labelSearchSuggestions(
   labels: LabelData[],
   selected: LabelSearchTerm[],
   query: string,
-  limit = 8,
+  limit?: number,
 ): LabelSearchTerm[] {
   const needle = query.trim().toLocaleLowerCase()
-  if (!needle) return []
 
   const selectedKeys = new Set(selected.map((term) => `${term.field}\u0000${term.value.toLocaleLowerCase()}`))
   const options = new Map<string, LabelSearchTerm>()
   for (const label of labels) {
     if (!labelMatchesSearchTerms(label, selected)) continue
-    const candidates: LabelSearchTerm[] = [
-      { field: 'block', value: label.block },
-      { field: 'room', value: label.room },
-      { field: 'description', value: label.description },
-      { field: 'brand', value: label.brand },
-    ]
+    // With an empty search, show every room immediately. Once the user types,
+    // search every supported field just as before.
+    const candidates: LabelSearchTerm[] = needle
+      ? [
+          { field: 'block', value: label.block },
+          { field: 'room', value: label.room },
+          { field: 'description', value: label.description },
+          { field: 'brand', value: label.brand },
+        ]
+      : [{ field: 'room', value: label.room }]
     for (const candidate of candidates) {
       const value = candidate.value.trim()
       const key = `${candidate.field}\u0000${value.toLocaleLowerCase()}`
-      if (!value || selectedKeys.has(key) || !value.toLocaleLowerCase().includes(needle)) continue
+      if (!value || selectedKeys.has(key) || (needle && !value.toLocaleLowerCase().includes(needle))) continue
       if (!options.has(key)) options.set(key, { ...candidate, value })
     }
   }
 
-  return [...options.values()]
+  const suggestions = [...options.values()]
     .sort((a, b) => {
       const aStarts = a.value.toLocaleLowerCase().startsWith(needle)
       const bStarts = b.value.toLocaleLowerCase().startsWith(needle)
       return Number(bStarts) - Number(aStarts) || a.value.localeCompare(b.value) || a.field.localeCompare(b.field)
     })
-    .slice(0, limit)
+  return limit === undefined ? suggestions : suggestions.slice(0, limit)
 }
 
 /**
