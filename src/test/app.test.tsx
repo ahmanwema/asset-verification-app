@@ -1035,6 +1035,13 @@ describe('finding labels before printing', () => {
     expect(screen.getByText('1 / 2')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Next photo for Student Chair' }))
     expect(screen.getByText('2 / 2')).toBeTruthy()
+
+    fireEvent.click(screen.getByText('SC-MAIN-1F-P3-001'))
+    const zoomButtons = await screen.findAllByRole('button', { name: 'Zoom Student Chair photo' })
+    fireEvent.click(zoomButtons[1])
+    expect(screen.getByRole('dialog', { name: 'Enlarged Student Chair photo' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    expect(screen.getByRole('button', { name: 'Reset zoom' }).textContent).toBe('150%')
   }, 10_000)
 
   it('searches and filters labels, grouped by their room', async () => {

@@ -416,11 +416,14 @@ function LabelPhotoCarousel({ label }: { label: LabelData }) {
 /** Shows every photo attached to the selected label's inspection entry. */
 function LabelPhotoSheet({ label, onClose }: { label: LabelData | null; onClose: () => void }) {
   const t = useT()
+  const [zoomedPhoto, setZoomedPhoto] = useState<{ id: string; url: string } | null>(null)
 
   useEffect(() => {
     if (!label) return
     void ensureEntryPhotos(label.entryId)
   }, [label?.entryId])
+
+  useEffect(() => setZoomedPhoto(null), [label?.entryId, label?.tag])
 
   const photos = useLiveQuery(
     async () => (label ? db.photos.where('entryId').equals(label.entryId).toArray() : []),
@@ -458,11 +461,177 @@ function LabelPhotoSheet({ label, onClose }: { label: LabelData | null; onClose:
         ) : (
           <div className="grid grid-cols-2 gap-2">
             {urls.map((item) => (
-              <img key={item.id} src={item.url} alt="" className="w-full rounded-xl object-cover" />
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setZoomedPhoto(item)}
+                className="relative overflow-hidden rounded-xl bg-slate-100 text-left"
+                aria-label={t('labels.openZoom', { item: label.description })}
+              >
+                <img
+                  src={item.url}
+                  alt={t('labels.photoPreview', { item: label.description })}
+                  className="aspect-square w-full object-cover"
+                />
+                <span className="absolute bottom-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-slate-950/70 text-white shadow">
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="11" cy="11" r="6" />
+                    <path d="M15.5 15.5L20 20M11 8v6M8 11h6" strokeLinecap="round" />
+                  </svg>
+                </span>
+              </button>
             ))}
           </div>
         )}
       </div>
+      {zoomedPhoto && (
+        <ZoomPhotoViewer
+          photo={zoomedPhoto}
+          item={label.description}
+          tag={label.tag}
+          onClose={() => setZoomedPhoto(null)}
+        />
+      )}
     </Sheet>
+  )
+}
+
+/** Full-screen viewer that can enlarge fine print such as serial numbers. */
+function ZoomPhotoViewer({
+  photo,
+  item,
+  tag,
+  onClose,
+}: {
+  photo: { id: string; url: string }
+  item: string
+  tag: string
+  onClose: () => void
+}) {
+  const t = useT()
+  const viewport = useRef<HTMLDivElement>(null)
+  const pinchStart = useRef<{ distance: number; zoom: number } | null>(null)
+  const [zoom, setZoom] = useState(1)
+
+  useEffect(() => {
+    setZoom(1)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [photo.id, onClose])
+
+  function changeZoom(value: number) {
+    const next = Math.max(1, Math.min(5, value))
+    const node = viewport.current
+    const centerX = node && node.scrollWidth > 0 ? (node.scrollLeft + node.clientWidth / 2) / node.scrollWidth : 0.5
+    const centerY = node && node.scrollHeight > 0 ? (node.scrollTop + node.clientHeight / 2) / node.scrollHeight : 0.5
+    setZoom(next)
+    if (!node) return
+    requestAnimationFrame(() => {
+      node.scrollLeft = centerX * node.scrollWidth - node.clientWidth / 2
+      node.scrollTop = centerY * node.scrollHeight - node.clientHeight / 2
+    })
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex flex-col bg-slate-950 text-white"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('labels.zoomViewer', { item })}
+    >
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/15 bg-slate-950/95 px-3 py-2">
+        <div className="min-w-0">
+          <p className="truncate font-mono text-sm font-bold">{tag}</p>
+          <p className="truncate text-xs text-slate-300">{item}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-3xl leading-none"
+          aria-label={t('common.close')}
+        >
+          &times;
+        </button>
+      </div>
+
+      <div
+        ref={viewport}
+        className="min-h-0 flex-1 overflow-auto overscroll-contain bg-black"
+        style={{ touchAction: 'pan-x pan-y' }}
+        onDoubleClick={() => changeZoom(zoom > 1 ? 1 : 3)}
+        onTouchStart={(event) => {
+          if (event.touches.length !== 2) return
+          const [a, b] = [event.touches[0], event.touches[1]]
+          pinchStart.current = { distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom }
+        }}
+        onTouchMove={(event) => {
+          if (event.touches.length !== 2 || !pinchStart.current) return
+          event.preventDefault()
+          const [a, b] = [event.touches[0], event.touches[1]]
+          const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+          setZoom(Math.max(1, Math.min(5, pinchStart.current.zoom * distance / pinchStart.current.distance)))
+        }}
+        onTouchEnd={(event) => {
+          if (event.touches.length < 2) pinchStart.current = null
+        }}
+      >
+        <div
+          className="flex items-center justify-center"
+          style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%`, minWidth: '100%', minHeight: '100%' }}
+        >
+          <img
+            src={photo.url}
+            alt={t('labels.photoPreview', { item })}
+            className="h-full w-full select-none object-contain"
+            draggable={false}
+          />
+        </div>
+      </div>
+
+      <div className="shrink-0 border-t border-white/15 bg-slate-950 px-3 pb-[calc(.75rem+var(--safe-bottom))] pt-2">
+        <p className="mb-2 text-center text-[11px] text-slate-300">{t('labels.zoomHint')}</p>
+        <div className="mx-auto flex max-w-md items-center gap-3">
+          <button
+            type="button"
+            onClick={() => changeZoom(zoom - 0.5)}
+            disabled={zoom <= 1}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-2xl font-bold disabled:opacity-30"
+            aria-label={t('labels.zoomOut')}
+          >
+            &minus;
+          </button>
+          <input
+            type="range"
+            min="1"
+            max="5"
+            step="0.25"
+            value={zoom}
+            onChange={(event) => changeZoom(Number(event.target.value))}
+            className="min-w-0 flex-1 accent-brand-400"
+            aria-label={t('labels.zoomLevel')}
+          />
+          <button
+            type="button"
+            onClick={() => changeZoom(zoom + 0.5)}
+            disabled={zoom >= 5}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-2xl font-bold disabled:opacity-30"
+            aria-label={t('labels.zoomIn')}
+          >
+            +
+          </button>
+          <button
+            type="button"
+            onClick={() => changeZoom(1)}
+            className="h-11 min-w-[3.5rem] shrink-0 rounded-xl bg-white/10 px-2 text-xs font-bold"
+            aria-label={t('labels.resetZoom')}
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
