@@ -138,6 +138,10 @@ describe('inspection walkthrough', () => {
     expect(await screen.findByText('Student Chair')).toBeTruthy()
     expect(screen.getByText('Smart Board')).toBeTruthy()
     expect(await screen.findByText('0/16 items checked')).toBeTruthy()
+    const roomHeading = screen.getByTestId('room-list-heading')
+    expect(within(roomHeading).getByText('Current room')).toBeTruthy()
+    expect(within(roomHeading).getByText('P3')).toBeTruthy()
+    expect(within(roomHeading).getByText(/Main Block.*1st Floor/)).toBeTruthy()
 
     // One tap marks an asset type absent and advances the progress counter.
     const chairRow = screen.getByText('Student Chair').closest('div.card') as HTMLElement

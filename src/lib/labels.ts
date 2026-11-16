@@ -254,9 +254,7 @@ export async function renderLabelsHtml(sheet: LabelSheet, origin = 'http://local
   const qrs = await Promise.all(
     sheet.labels.map((label) => qrDataUrl(labelTargetUrl(label, origin), 180)),
   )
-  const cells = sheet.labels
-    .map(
-      (l, i) => `
+  const cellFor = (l: LabelData, i: number) => `
       <div class="label">
         <img class="qr" src="${qrs[i]}" alt="${escapeHtml(l.tag)}" />
         <div class="body">
@@ -267,8 +265,32 @@ export async function renderLabelsHtml(sheet: LabelSheet, origin = 'http://local
           <div class="loc">${escapeHtml([l.block, l.floor, l.room].filter(Boolean).join(' · '))}</div>
           <div class="date">Verified ${escapeHtml(sheet.verifiedOn)}</div>
         </div>
-      </div>`,
-    )
+      </div>`
+
+  const roomGroups = new Map<string, Array<{ label: LabelData; index: number }>>()
+  sheet.labels.forEach((label, index) => {
+    const key = label.roomId || [label.block, label.floor, label.room].join('\u0000')
+    const group = roomGroups.get(key) ?? []
+    group.push({ label, index })
+    roomGroups.set(key, group)
+  })
+
+  const roomSections = [...roomGroups.values()]
+    .map((group) => {
+      const location = group[0].label
+      const context = [location.block, location.floor].filter(Boolean).map(escapeHtml).join(' &middot; ')
+      const roomName = location.room || 'Room not recorded'
+      const cells = group.map(({ label, index }) => cellFor(label, index)).join('')
+      return `
+      <section class="room-section">
+        <header class="room-heading">
+          <div class="room-kicker">ROOM / CHUMBA</div>
+          <h1>${escapeHtml(roomName)}</h1>
+          ${context ? `<div class="room-context">${context}</div>` : ''}
+        </header>
+        <div class="label-grid">${cells}</div>
+      </section>`
+    })
     .join('')
 
   return `<!doctype html>
@@ -280,7 +302,18 @@ export async function renderLabelsHtml(sheet: LabelSheet, origin = 'http://local
   @page { size: A4; margin: 8mm; }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #000; background: #fff; }
-  .sheet { display: flex; flex-wrap: wrap; gap: 2mm; }
+  .sheet { background: #fff; }
+  .room-section { break-inside: auto; }
+  .room-section + .room-section { break-before: page; page-break-before: always; }
+  .room-heading {
+    min-height: 15mm; margin: 0 0 4mm; padding: 2.5mm 3mm;
+    border: 0.4mm solid #0f766e; border-left-width: 2mm; border-radius: 1.5mm;
+    break-after: avoid; page-break-after: avoid;
+  }
+  .room-kicker { color: #0f766e; font-size: 7pt; font-weight: 800; letter-spacing: 0.8pt; }
+  .room-heading h1 { margin: 0.5mm 0 0; font-size: 16pt; line-height: 1.1; }
+  .room-context { margin-top: 0.8mm; color: #334155; font-size: 9pt; font-weight: 600; }
+  .label-grid { display: flex; flex-wrap: wrap; gap: 2mm; }
   .label {
     width: 50mm; height: 30mm; border: 0.3mm solid #000; border-radius: 1mm;
     padding: 1.5mm; display: flex; gap: 1.5mm; align-items: center;
@@ -297,12 +330,13 @@ export async function renderLabelsHtml(sheet: LabelSheet, origin = 'http://local
   .empty { padding: 20mm; text-align: center; font-size: 12pt; }
   @media screen {
     body { background: #f1f5f9; padding: 6mm; }
-    .sheet { background: #fff; padding: 8mm; box-shadow: 0 1px 6px rgba(0,0,0,.2); }
+    .sheet { padding: 8mm; box-shadow: 0 1px 6px rgba(0,0,0,.2); }
+    .room-section + .room-section { margin-top: 10mm; padding-top: 8mm; border-top: 1px dashed #94a3b8; }
   }
 </style>
 </head>
 <body>
-  ${sheet.labels.length === 0 ? '<div class="empty">No tags issued for this selection yet.</div>' : `<div class="sheet">${cells}</div>`}
+  ${sheet.labels.length === 0 ? '<div class="empty">No tags issued for this selection yet.</div>' : `<main class="sheet">${roomSections}</main>`}
   <script>window.addEventListener('load', function () { setTimeout(function () { window.print() }, 250) })</script>
 </body>
 </html>`

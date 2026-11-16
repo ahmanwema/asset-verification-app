@@ -98,6 +98,7 @@ export default function RoomPage() {
   const assetTypeById = new Map(allAssetTypes.map((assetType) => [assetType.id, assetType]))
   const floorById = new Map(floors.map((candidate) => [candidate.id, candidate]))
   const blockById = new Map(blocks.map((candidate) => [candidate.id, candidate]))
+  const currentBlock = blockById.get(effectiveBlockId ?? '')
   const entryLabel = (entry: InspectionEntry) => {
     if (entry.isUnlistedItem) return entry.unlistedItemName ?? t('entry.unlisted')
     const assetType = entry.assetTypeId ? assetTypeById.get(entry.assetTypeId) : undefined
@@ -248,7 +249,7 @@ export default function RoomPage() {
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-lg font-bold text-slate-900">{room.name}</h1>
           <p className="text-xs text-slate-500">
-            {floor?.name} · {room.code}
+            {[currentBlock?.name, floor?.name, room.code].filter(Boolean).join(' · ')}
           </p>
         </div>
         {signoff && (
@@ -270,6 +271,24 @@ export default function RoomPage() {
           {signedBy && <span>· {t('room.signedBy', { name: signedBy })}</span>}
         </div>
       </Card>
+
+      <div
+        data-testid="room-list-heading"
+        className="sticky top-[49px] z-20 -mx-3 border-y border-slate-200 bg-slate-100/95 px-3 py-2 shadow-sm backdrop-blur"
+      >
+        <p className="text-[10px] font-bold uppercase tracking-wide text-brand-700">{t('room.currentRoom')}</p>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="truncate text-base font-bold text-slate-900">{room.name}</h2>
+            <p className="truncate text-xs text-slate-500">
+              {[currentBlock?.name, floor?.name].filter(Boolean).join(' · ')}
+            </p>
+          </div>
+          {room.code.localeCompare(room.name, undefined, { sensitivity: 'base' }) !== 0 && (
+            <span className="chip shrink-0 border border-slate-200 bg-white text-slate-700">{room.code}</span>
+          )}
+        </div>
+      </div>
 
       <SectionTitle
         action={

@@ -245,6 +245,7 @@ export const en = {
   'ai.catalogReview': 'AI suggestion — review or edit before adding',
 
   'room.progress': '{done}/{total} items checked',
+  'room.currentRoom': 'Current room',
   'room.signoff': 'Sign off room',
   'room.signedBy': 'Signed off by {name}',
   'room.reopen': 'Reopen room',
@@ -784,6 +785,7 @@ export const sw: Record<StringKey, string> = {
   'ai.catalogReview': 'Mapendekezo ya AI — hakiki au hariri kabla ya kuongeza',
 
   'room.progress': 'Vifaa {done}/{total} vimehakikiwa',
+  'room.currentRoom': 'Chumba unachokagua',
   'room.signoff': 'Thibitisha chumba',
   'room.signedBy': 'Imethibitishwa na {name}',
   'room.reopen': 'Fungua chumba tena',

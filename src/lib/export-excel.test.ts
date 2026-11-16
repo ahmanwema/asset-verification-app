@@ -435,6 +435,35 @@ describe('label data', () => {
       `https://assets.example.org/asset/${chair.entryId}?tag=${encodeURIComponent(chair.tag)}`,
     )
   })
+
+  it('prints a block, floor and room heading above each room label group', async () => {
+    await populate()
+    const { collectLabels, renderLabelsHtml } = await import('./labels')
+    const sheet = await collectLabels({ exerciseId: fx.exercise.id, scope: 'exercise' })
+    const first = sheet.labels[0]
+    expect(first).toBeTruthy()
+
+    const html = await renderLabelsHtml({
+      ...sheet,
+      labels: [
+        first,
+        {
+          ...first,
+          tag: `${first.tag}-OTHER`,
+          roomId: 'another-room',
+          block: 'Administration Block',
+          floor: 'G. Floor',
+          room: 'Reception',
+        },
+      ],
+    }, 'https://assets.example.org')
+
+    expect(html.match(/class="room-heading"/g)).toHaveLength(2)
+    expect(html).toContain('ROOM / CHUMBA')
+    expect(html).toContain('<h1>Reception</h1>')
+    expect(html).toContain('Administration Block &middot; G. Floor')
+    expect(html).toContain('room-section + .room-section { break-before: page')
+  })
 })
 
 describe('an item found in the wrong room', () => {
