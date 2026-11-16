@@ -384,6 +384,32 @@ describe('label data', () => {
     expect(labelSearchSuggestions([{ ...chair, block: 'Administration Block' }], [], 'admin')).toEqual([
       { field: 'block', value: 'Administration Block' },
     ])
+    const blockLabels = [
+      { ...chair, block: 'Administration Block', floor: 'G. Floor', room: 'Reception' },
+      { ...chair, block: 'Administration Block', floor: '1st Floor', room: 'Director' },
+      { ...chair, block: 'Administration Block', floor: '1st Floor', room: 'Secretary' },
+    ]
+    const afterBlock = labelSearchSuggestions(
+      blockLabels,
+      [{ field: 'block', value: 'Administration Block' }],
+      '',
+    )
+    expect(afterBlock.slice(0, 2)).toEqual([
+      { field: 'floor', value: '1st Floor' },
+      { field: 'floor', value: 'G. Floor' },
+    ])
+    expect(afterBlock.filter((term) => term.field === 'room')).toHaveLength(3)
+    expect(labelSearchSuggestions(
+      blockLabels,
+      [
+        { field: 'block', value: 'Administration Block' },
+        { field: 'floor', value: '1st Floor' },
+      ],
+      '',
+    )).toEqual([
+      { field: 'room', value: 'Director' },
+      { field: 'room', value: 'Secretary' },
+    ])
     expect(labelSearchSuggestions(sheet.labels, [{ field: 'room', value: 'P3' }], 'stud')).toEqual([
       { field: 'description', value: 'Student Chair' },
     ])

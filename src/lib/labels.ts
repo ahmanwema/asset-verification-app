@@ -30,7 +30,7 @@ export interface LabelSheet {
   labels: LabelData[]
 }
 
-export type LabelSearchField = 'block' | 'room' | 'description' | 'brand'
+export type LabelSearchField = 'block' | 'floor' | 'room' | 'description' | 'brand'
 
 export interface LabelSearchTerm {
   field: LabelSearchField
@@ -42,7 +42,7 @@ export function labelMatchesSearchTerms(label: LabelData, terms: LabelSearchTerm
   return terms.every((term) => label[term.field].localeCompare(term.value, undefined, { sensitivity: 'base' }) === 0)
 }
 
-/** Builds de-duplicated room, asset and brand suggestions from the current result set. */
+/** Builds de-duplicated location, asset and brand suggestions from the current result set. */
 export function labelSearchSuggestions(
   labels: LabelData[],
   selected: LabelSearchTerm[],
@@ -50,21 +50,30 @@ export function labelSearchSuggestions(
   limit?: number,
 ): LabelSearchTerm[] {
   const needle = query.trim().toLocaleLowerCase()
+  const blockSelected = selected.some((term) => term.field === 'block')
+  const floorSelected = selected.some((term) => term.field === 'floor')
 
   const selectedKeys = new Set(selected.map((term) => `${term.field}\u0000${term.value.toLocaleLowerCase()}`))
   const options = new Map<string, LabelSearchTerm>()
   for (const label of labels) {
     if (!labelMatchesSearchTerms(label, selected)) continue
-    // With an empty search, show every room immediately. Once the user types,
-    // search every supported field just as before.
+    // With an empty search, show every room immediately. Once a block is
+    // selected, place its floors above the rooms so the user can narrow the
+    // location hierarchically. Typed searches still cover every field.
     const candidates: LabelSearchTerm[] = needle
       ? [
           { field: 'block', value: label.block },
+          { field: 'floor', value: label.floor },
           { field: 'room', value: label.room },
           { field: 'description', value: label.description },
           { field: 'brand', value: label.brand },
         ]
-      : [{ field: 'room', value: label.room }]
+      : blockSelected && !floorSelected
+        ? [
+            { field: 'floor', value: label.floor },
+            { field: 'room', value: label.room },
+          ]
+        : [{ field: 'room', value: label.room }]
     for (const candidate of candidates) {
       const value = candidate.value.trim()
       const key = `${candidate.field}\u0000${value.toLocaleLowerCase()}`
@@ -77,7 +86,17 @@ export function labelSearchSuggestions(
     .sort((a, b) => {
       const aStarts = a.value.toLocaleLowerCase().startsWith(needle)
       const bStarts = b.value.toLocaleLowerCase().startsWith(needle)
-      return Number(bStarts) - Number(aStarts) || a.value.localeCompare(b.value) || a.field.localeCompare(b.field)
+      const fieldOrder: Record<LabelSearchField, number> = {
+        block: 0,
+        floor: 1,
+        room: 2,
+        description: 3,
+        brand: 4,
+      }
+      return Number(bStarts) - Number(aStarts) ||
+        (!needle ? fieldOrder[a.field] - fieldOrder[b.field] : 0) ||
+        a.value.localeCompare(b.value) ||
+        fieldOrder[a.field] - fieldOrder[b.field]
     })
   return limit === undefined ? suggestions : suggestions.slice(0, limit)
 }
