@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
 import { collectLabels, printLabels, type LabelData, type LabelScope } from '../lib/labels'
@@ -240,14 +240,13 @@ export default function LabelsPage() {
 
                 <Card className="divide-y divide-slate-100 p-0">
                   {group.labels.map((label) => (
-                    <button
-                      key={label.tag}
-                      type="button"
-                      onClick={() => setSelected(label)}
-                      className="flex w-full items-center gap-3 px-3 py-2.5 text-left active:bg-slate-50"
-                    >
-                      <LabelThumbnail label={label} />
-                      <div className="min-w-0 flex-1">
+                    <div key={label.tag} className="flex w-full items-center gap-3 px-3 py-3">
+                      <LabelPhotoCarousel label={label} />
+                      <button
+                        type="button"
+                        onClick={() => setSelected(label)}
+                        className="flex min-w-0 flex-1 flex-col items-start self-stretch py-1 text-left active:opacity-70"
+                      >
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                           <span className="font-mono text-xs font-bold text-slate-900">{label.tag}</span>
                           {label.photoCount > 0 && (
@@ -256,20 +255,21 @@ export default function LabelsPage() {
                         </div>
                         <p className="truncate text-xs text-slate-600">{label.description}</p>
                         {label.serial && <p className="truncate text-[11px] text-slate-400">{label.serial}</p>}
-                      </div>
-                      <span className={`chip shrink-0 ${CONDITION_STYLE[label.condition].chip}`}>
-                        {t(`condition.${label.condition}`)}
-                      </span>
-                      <svg
-                        viewBox="0 0 24 24"
-                        className="h-4 w-4 shrink-0 text-slate-300"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
+                        <span className={`chip mt-auto inline-block ${CONDITION_STYLE[label.condition].chip}`}>
+                          {t(`condition.${label.condition}`)}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelected(label)}
+                        className="flex h-10 w-7 shrink-0 items-center justify-end text-slate-300 active:text-brand-700"
+                        aria-label={label.tag}
                       >
-                        <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </button>
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </button>
+                    </div>
                   ))}
                 </Card>
               </section>
@@ -295,50 +295,119 @@ export default function LabelsPage() {
   )
 }
 
-/** Displays the first photo for a label without requiring the row to be opened. */
-function LabelThumbnail({ label }: { label: LabelData }) {
+/** Large, swipeable photo preview with previous/next controls for every label. */
+function LabelPhotoCarousel({ label }: { label: LabelData }) {
   const t = useT()
+  const scroller = useRef<HTMLDivElement>(null)
+  const [active, setActive] = useState(0)
   const photoIdsKey = label.photoIds.join('\u0000')
 
   useEffect(() => {
     if (label.photoIds.length > 0) void ensureLabelPhotos(label.entryId)
   }, [label.entryId, photoIdsKey])
 
-  const photo = useLiveQuery(async () => {
-    if (label.photoIds.length === 0) return null
+  const photos = useLiveQuery(async () => {
+    if (label.photoIds.length === 0) return []
     const candidates = await db.photos.bulkGet(label.photoIds)
-    return candidates.find((candidate) => candidate !== undefined) ?? null
+    return candidates.filter((candidate) => candidate !== undefined)
   }, [label.entryId, photoIdsKey])
 
-  const url = useMemo(() => (photo ? URL.createObjectURL(photoBlob(photo)) : ''), [photo])
+  const urls = useMemo(
+    () => (photos ?? []).map((photo) => ({ id: photo.id, url: URL.createObjectURL(photoBlob(photo)) })),
+    [photos],
+  )
   useEffect(() => () => {
-    if (url) URL.revokeObjectURL(url)
-  }, [url])
+    urls.forEach((photo) => URL.revokeObjectURL(photo.url))
+  }, [urls])
+
+  useEffect(() => setActive(0), [photoIdsKey])
+
+  function showPhoto(index: number) {
+    const next = Math.max(0, Math.min(index, urls.length - 1))
+    setActive(next)
+    const node = scroller.current
+    if (!node) return
+    if (typeof node.scrollTo === 'function') {
+      node.scrollTo({ left: next * node.clientWidth, behavior: 'smooth' })
+    } else {
+      node.scrollLeft = next * node.clientWidth
+    }
+  }
 
   return (
-    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100">
-      {url ? (
-        <img
-          src={url}
-          alt={t('labels.photoPreview', { item: label.description })}
-          className="h-full w-full object-cover"
-          loading="lazy"
-        />
-      ) : photo === undefined ? (
-        <span className="h-full w-full animate-pulse bg-slate-200" aria-hidden="true" />
-      ) : (
-        <svg
-          viewBox="0 0 24 24"
-          className="h-5 w-5 text-slate-300"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          aria-label={label.photoCount > 0 ? t('labels.photoPreview', { item: label.description }) : t('labels.noPhoto')}
-        >
-          <path d="M4 8.5A1.5 1.5 0 015.5 7H8l1-2h6l1 2h2.5A1.5 1.5 0 0120 8.5v8a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 16.5v-8z" strokeLinecap="round" strokeLinejoin="round" />
-          <path d="M9.5 12.5a2.5 2.5 0 105 0 2.5 2.5 0 00-5 0z" strokeLinecap="round" />
-          {label.photoCount === 0 && <path d="M5 19L19 5" strokeLinecap="round" />}
-        </svg>
+    <div className="w-28 shrink-0 sm:w-36">
+      <div
+        ref={scroller}
+        className="flex h-24 snap-x snap-mandatory overflow-x-auto rounded-xl bg-slate-100 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:h-28"
+        onScroll={(event) => {
+          const width = event.currentTarget.clientWidth
+          if (width > 0) setActive(Math.min(urls.length - 1, Math.max(0, Math.round(event.currentTarget.scrollLeft / width))))
+        }}
+      >
+        {urls.length > 0 ? urls.map((photo, index) => (
+          <img
+            key={photo.id}
+            src={photo.url}
+            alt={t('labels.photoPreview', { item: label.description })}
+            className="h-full min-w-full snap-center object-cover"
+            loading={index === 0 ? 'eager' : 'lazy'}
+          />
+        )) : photos === undefined ? (
+          <span className="h-full min-w-full animate-pulse bg-slate-200" aria-hidden="true" />
+        ) : (
+          <span className="flex h-full min-w-full items-center justify-center">
+            <svg
+              viewBox="0 0 24 24"
+              className="h-7 w-7 text-slate-300"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              aria-label={label.photoCount > 0 ? t('labels.photoPreview', { item: label.description }) : t('labels.noPhoto')}
+            >
+              <path d="M4 8.5A1.5 1.5 0 015.5 7H8l1-2h6l1 2h2.5A1.5 1.5 0 0120 8.5v8a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 16.5v-8z" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M9.5 12.5a2.5 2.5 0 105 0 2.5 2.5 0 00-5 0z" strokeLinecap="round" />
+              {label.photoCount === 0 && <path d="M5 19L19 5" strokeLinecap="round" />}
+            </svg>
+          </span>
+        )}
+      </div>
+
+      {urls.length > 0 && (
+        <div className="mt-1 flex h-7 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => showPhoto(active - 1)}
+            disabled={active === 0}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 disabled:text-slate-200"
+            aria-label={t('labels.previousPhoto', { item: label.description })}
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2">
+              <path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <div className="min-w-0 flex-1">
+            <p className="text-center text-[9px] font-semibold leading-none text-slate-400" aria-live="polite">
+              {active + 1} / {urls.length}
+            </p>
+            <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-200">
+              <span
+                className="block h-full rounded-full bg-brand-600 transition-transform"
+                style={{ width: `${100 / urls.length}%`, transform: `translateX(${active * 100}%)` }}
+              />
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => showPhoto(active + 1)}
+            disabled={active >= urls.length - 1}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 disabled:text-slate-200"
+            aria-label={t('labels.nextPhoto', { item: label.description })}
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2">
+              <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
       )}
     </div>
   )

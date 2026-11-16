@@ -1018,15 +1018,23 @@ describe('finding labels before printing', () => {
       'input[capture="environment"][multiple]',
     ) as HTMLInputElement
     fireEvent.change(camera, {
-      target: { files: [new File([new Uint8Array([1, 2, 3])], 'chair.jpg', { type: 'image/jpeg' })] },
+      target: {
+        files: [
+          new File([new Uint8Array([1, 2, 3])], 'chair-front.jpg', { type: 'image/jpeg' }),
+          new File([new Uint8Array([4, 5, 6])], 'chair-back.jpg', { type: 'image/jpeg' }),
+        ],
+      },
     })
-    expect(await screen.findByText('📷 1')).toBeTruthy()
+    expect(await screen.findByText('📷 2')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
     await screen.findByText('1/16 items checked', undefined, { timeout: 5000 })
     fireEvent.click(screen.getByRole('link', { name: /labels/i }))
 
-    expect(await screen.findByRole('img', { name: 'Student Chair photo' })).toBeTruthy()
+    expect(await screen.findAllByRole('img', { name: 'Student Chair photo' })).toHaveLength(2)
+    expect(screen.getByText('1 / 2')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Next photo for Student Chair' }))
+    expect(screen.getByText('2 / 2')).toBeTruthy()
   }, 10_000)
 
   it('searches and filters labels, grouped by their room', async () => {

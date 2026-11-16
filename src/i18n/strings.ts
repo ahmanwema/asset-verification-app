@@ -142,6 +142,8 @@ export const en = {
 
   'labels.tapForPhoto': 'Photos appear below automatically. Tap a label to view all photos.',
   'labels.photoPreview': '{item} photo',
+  'labels.previousPhoto': 'Previous photo for {item}',
+  'labels.nextPhoto': 'Next photo for {item}',
   'labels.noPhoto': 'No photo was taken for this item',
 
   'register.title': 'Register an institution',
@@ -599,6 +601,8 @@ export const sw: Record<StringKey, string> = {
 
   'labels.tapForPhoto': 'Picha zinaonekana hapa chini moja kwa moja. Gusa lebo kuona picha zote.',
   'labels.photoPreview': 'Picha ya {item}',
+  'labels.previousPhoto': 'Picha iliyopita ya {item}',
+  'labels.nextPhoto': 'Picha inayofuata ya {item}',
   'labels.noPhoto': 'Hakuna picha iliyopigwa kwa kifaa hiki',
 
   'register.title': 'Sajili taasisi',
