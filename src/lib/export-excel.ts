@@ -68,8 +68,16 @@ export async function buildReportBundle(exerciseId: string): Promise<ReportBundl
   const [exercise, blocks, floors, rooms, assetTypes, inspectors, entriesRaw, signoffs, orgs] = await Promise.all([
     db.exercises.get(exerciseId),
     db.blocks.where('exerciseId').equals(exerciseId).toArray().then((rows) => rows.filter((block) => !block.deleted)),
-    db.floors.where('exerciseId').equals(exerciseId).toArray(),
-    db.rooms.where('exerciseId').equals(exerciseId).toArray(),
+    db.floors
+      .where('exerciseId')
+      .equals(exerciseId)
+      .toArray()
+      .then((rows) => rows.filter((floor) => !floor.deleted)),
+    db.rooms
+      .where('exerciseId')
+      .equals(exerciseId)
+      .toArray()
+      .then((rows) => rows.filter((room) => !room.deleted)),
     db.assetTypes.toArray(),
     db.inspectors.toArray(),
     db.entries.where('exerciseId').equals(exerciseId).toArray(),

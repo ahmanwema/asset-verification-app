@@ -101,16 +101,16 @@ export default function LabelsPage() {
 
   const floors = useLiveQuery(async () => {
     if (!exercise) return []
-    return (await db.floors.where('exerciseId').equals(exercise.id).toArray()).sort(
-      (a, b) => a.sortOrder - b.sortOrder,
-    )
+    return (await db.floors.where('exerciseId').equals(exercise.id).toArray())
+      .filter((floor) => !floor.deleted)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
   }, [exercise?.id])
 
   const rooms = useLiveQuery(async () => {
     if (!floorId) return []
-    return (await db.rooms.where('floorId').equals(floorId).toArray()).sort(
-      (a, b) => a.sortOrder - b.sortOrder,
-    )
+    return (await db.rooms.where('floorId').equals(floorId).toArray())
+      .filter((room) => !room.deleted)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
   }, [floorId])
 
   const assetTypes = useLiveQuery(async () => {

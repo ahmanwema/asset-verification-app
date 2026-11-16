@@ -121,10 +121,11 @@ export async function loadFloorProgress(exerciseId: string): Promise<FloorProgre
   for (const s of signoffs) if (!s.deleted) signoffByRoom.set(s.roomId, s)
 
   return floors
+    .filter((floor) => !floor.deleted)
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((floor) => {
       const floorRooms = rooms
-        .filter((r) => r.floorId === floor.id)
+        .filter((r) => !r.deleted && r.floorId === floor.id)
         .sort((a, b) => a.sortOrder - b.sortOrder)
         .map((room) => roomProgress(room, byRoom.get(room.id) ?? [], signoffByRoom.get(room.id), activeTypes))
       return {

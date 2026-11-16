@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db, getMeta } from '../db/db'
 import { useI18n, useT } from '../i18n'
 import { useOnline, useSession } from '../state/session'
-import { getToken, resyncEverything, syncNow } from '../lib/sync'
+import { getToken, loadSyncState, resyncEverything, syncNow } from '../lib/sync'
 import type { StringKey } from '../i18n/strings'
 
 const NAV: Array<{ to: string; key: StringKey; icon: ReactNode }> = [
@@ -79,13 +79,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
     return db.organizations.get(exercise.orgId)
   }, [exercise?.orgId])
 
+  // Include setup records too. In particular, room/floor tombstones must
+  // trigger an immediate push or a user closing the app could leave another
+  // device showing the deleted location until the next heartbeat.
   const pending = useLiveQuery(async () => {
-    const [entries, signoffs, photos] = await Promise.all([
-      db.entries.where('syncStatus').equals('pending').count(),
-      db.signoffs.where('syncStatus').equals('pending').count(),
-      db.photos.where('syncStatus').equals('pending').count(),
-    ])
-    return entries + signoffs + photos
+    const state = await loadSyncState()
+    return state.pendingRecords + state.pendingPhotos
   }, [])
 
   const conflicts = useLiveQuery(() => db.entries.where('syncStatus').equals('conflict').count(), [])

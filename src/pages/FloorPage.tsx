@@ -26,7 +26,7 @@ export default function FloorPage() {
     return all.find((f) => f.floor.id === floorId)
   }, [exercise?.id, floorId])
 
-  if (!floor) return <EmptyState title={t('common.empty')} />
+  if (!floor || floor.deleted) return <EmptyState title={t('common.empty')} />
 
   const knownBlockIds = new Set(blocks?.map((block) => block.id) ?? [])
   const scopedRooms = (progress?.rooms ?? []).filter((rp) => {

@@ -50,6 +50,31 @@ describe('sample data', () => {
 })
 
 describe('blocks', () => {
+  it('keeps a deleted room as a sync tombstone and hides it from the floor plan', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('Setup'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Blocks, floors & rooms' }))
+
+    fireEvent.click(await screen.findByText('Ground Floor'))
+    const roomInput = await screen.findByDisplayValue('Toilet Boys')
+    const roomRow = roomInput.closest('li') as HTMLElement
+    const ground = await db.floors.filter((candidate) => candidate.name === 'Ground Floor').first()
+    const room = await db.rooms
+      .filter((candidate) => candidate.name === 'Toilet Boys' && candidate.floorId === ground?.id)
+      .first()
+
+    fireEvent.click(within(roomRow).getByRole('button', { name: 'Delete' }))
+
+    await waitFor(async () => {
+      expect(await db.rooms.get(room!.id)).toMatchObject({ deleted: true, syncStatus: 'pending' })
+      expect(screen.queryByDisplayValue('Toilet Boys')).toBeNull()
+    })
+
+    fireEvent.click(screen.getByText('Inspect'))
+    fireEvent.click(await screen.findByText('Ground Floor'))
+    expect(screen.queryByText('Toilet Boys')).toBeNull()
+  })
+
   it('adds a block and moves one room without moving the rest of its floor', async () => {
     await signIn()
     fireEvent.click(await screen.findByText('Setup'))

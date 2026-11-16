@@ -110,7 +110,7 @@ export default function EntryPage() {
 
   const ctx = useLiveQuery(async () => {
     const room = await db.rooms.get(roomId)
-    if (!room) return null
+    if (!room || room.deleted) return null
     const [floor, assetType, assetTypes, entries, inspectors, allRooms, allFloors] = await Promise.all([
       db.floors.get(room.floorId),
       isUnlisted ? Promise.resolve(undefined) : db.assetTypes.get(assetTypeId),
@@ -136,8 +136,8 @@ export default function EntryPage() {
       entries,
       existing,
       inspectors,
-      allRooms,
-      allFloors,
+      allRooms: allRooms.filter((candidate) => !candidate.deleted),
+      allFloors: allFloors.filter((candidate) => !candidate.deleted),
     }
   }, [roomId, assetTypeId, editId])
 

@@ -49,6 +49,8 @@ export interface Floor {
   name: string
   code: string // used in tag numbers, e.g. GF, 1F
   sortOrder: number
+  /** Tombstone kept for sync so a deleted floor cannot be restored by the server. */
+  deleted?: boolean
   updatedAt: number
   syncStatus: SyncStatus
 }
@@ -62,6 +64,8 @@ export interface Room {
   name: string
   code: string // used in tag numbers, e.g. P3
   sortOrder: number
+  /** Tombstone kept for sync so a deleted room cannot be restored by the server. */
+  deleted?: boolean
   updatedAt: number
   syncStatus: SyncStatus
 }

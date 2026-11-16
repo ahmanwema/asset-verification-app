@@ -266,8 +266,8 @@ function FloorsTab({
     const used = new Set(entries.filter((e) => !e.deleted).map((e) => e.roomId))
     return {
       blocks: blocks.filter((block) => !block.deleted).sort((a, b) => a.sortOrder - b.sortOrder),
-      floors: floors.sort((a, b) => a.sortOrder - b.sortOrder),
-      rooms: rooms.sort((a, b) => a.sortOrder - b.sortOrder),
+      floors: floors.filter((floor) => !floor.deleted).sort((a, b) => a.sortOrder - b.sortOrder),
+      rooms: rooms.filter((room) => !room.deleted).sort((a, b) => a.sortOrder - b.sortOrder),
       used,
     }
   }, [exerciseId])
@@ -337,7 +337,9 @@ function FloorsTab({
       flash(t('setup.deleteBlocked'))
       return
     }
-    await db.rooms.delete(room.id)
+    // Keep a tombstone. A hard delete leaves the server's live copy intact,
+    // so the next pull would recreate the room on this and every other device.
+    await patchRoom(room.id, { deleted: true })
   }
 
   async function removeFloor(floor: Floor) {
@@ -346,8 +348,20 @@ function FloorsTab({
       flash(t('setup.deleteBlocked'))
       return
     }
-    await db.rooms.bulkDelete(floorRooms.map((r) => r.id))
-    await db.floors.delete(floor.id)
+    const now = Date.now()
+    await db.transaction('rw', db.rooms, db.floors, async () => {
+      await Promise.all(
+        floorRooms.map((room, index) =>
+          db.rooms.put({ ...room, deleted: true, updatedAt: now + index, syncStatus: 'pending' }),
+        ),
+      )
+      await db.floors.put({
+        ...floor,
+        deleted: true,
+        updatedAt: now + floorRooms.length,
+        syncStatus: 'pending',
+      })
+    })
   }
 
   async function removeBlock(block: Block) {

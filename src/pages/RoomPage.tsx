@@ -46,7 +46,7 @@ export default function RoomPage() {
 
   const data = useLiveQuery(async () => {
     const room = await db.rooms.get(roomId)
-    if (!room) return null
+    if (!room || room.deleted) return null
     const [floor, allAssetTypes, entries, signoff, inspectors, rooms, floors, blocks] = await Promise.all([
       db.floors.get(room.floorId),
       db.assetTypes.orderBy('sortOrder').toArray(),
@@ -65,8 +65,8 @@ export default function RoomPage() {
       entries: entries.filter((e) => !e.deleted),
       signoff: signoff && !signoff.deleted ? signoff : undefined,
       inspectors,
-      rooms,
-      floors,
+      rooms: rooms.filter((candidate) => !candidate.deleted),
+      floors: floors.filter((candidate) => !candidate.deleted),
       blocks: blocks.filter((block) => !block.deleted),
     }
   }, [roomId])

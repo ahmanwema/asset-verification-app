@@ -133,8 +133,16 @@ export async function collectLabels(opts: {
   const [exercise, blocks, floors, rooms, assetTypes, entriesRaw, orgs] = await Promise.all([
     db.exercises.get(opts.exerciseId),
     db.blocks.where('exerciseId').equals(opts.exerciseId).toArray().then((rows) => rows.filter((block) => !block.deleted)),
-    db.floors.where('exerciseId').equals(opts.exerciseId).toArray(),
-    db.rooms.where('exerciseId').equals(opts.exerciseId).toArray(),
+    db.floors
+      .where('exerciseId')
+      .equals(opts.exerciseId)
+      .toArray()
+      .then((rows) => rows.filter((floor) => !floor.deleted)),
+    db.rooms
+      .where('exerciseId')
+      .equals(opts.exerciseId)
+      .toArray()
+      .then((rows) => rows.filter((room) => !room.deleted)),
     db.assetTypes.toArray(),
     db.entries.where('exerciseId').equals(opts.exerciseId).toArray(),
     db.organizations.toArray(),
