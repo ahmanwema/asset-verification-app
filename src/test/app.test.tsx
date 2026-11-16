@@ -417,11 +417,30 @@ describe('moving recorded items to the correct room', () => {
 
     const p4 = await db.rooms.filter((room) => room.name === 'P4').first()
     expect(p4).toBeTruthy()
+    const p4Floor = await db.floors.get(p4!.floorId)
+    const p4Block = await db.blocks.get(p4!.blockId ?? p4Floor!.blockId!)
+    expect(p4Floor).toBeTruthy()
+    expect(p4Block).toBeTruthy()
+
+    function chooseP4Destination(dialog: HTMLElement) {
+      const blockSearch = within(dialog).getByPlaceholderText('Type or choose a block')
+      fireEvent.focus(blockSearch)
+      fireEvent.change(blockSearch, { target: { value: p4Block!.name.slice(0, 4) } })
+      fireEvent.click(within(dialog).getByRole('button', { name: new RegExp(`${p4Block!.name}$`) }))
+      const floorSearch = within(dialog).getByPlaceholderText('Type or choose a floor')
+      fireEvent.focus(floorSearch)
+      fireEvent.change(floorSearch, { target: { value: p4Floor!.name.slice(0, 3) } })
+      fireEvent.click(within(dialog).getByRole('button', { name: new RegExp(`${p4Floor!.name}$`) }))
+      const roomSearch = within(dialog).getByPlaceholderText('Type or choose a room')
+      fireEvent.focus(roomSearch)
+      fireEvent.change(roomSearch, { target: { value: p4!.name } })
+      fireEvent.click(within(dialog).getByRole('button', { name: new RegExp(`${p4!.name}$`) }))
+    }
 
     fireEvent.click(screen.getByRole('button', { name: 'Move items' }))
     let dialog = await screen.findByRole('dialog', { name: 'Move items' })
     fireEvent.click(within(dialog).getByLabelText('Select Student Chair to move'))
-    fireEvent.change(within(dialog).getByLabelText('Move to room'), { target: { value: p4!.id } })
+    chooseP4Destination(dialog)
     fireEvent.click(within(dialog).getByRole('button', { name: 'Move 1 selected' }))
 
     await waitFor(async () => {
@@ -435,7 +454,7 @@ describe('moving recorded items to the correct room', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Move items' }))
     dialog = await screen.findByRole('dialog', { name: 'Move items' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Select all' }))
-    fireEvent.change(within(dialog).getByLabelText('Move to room'), { target: { value: p4!.id } })
+    chooseP4Destination(dialog)
     fireEvent.click(within(dialog).getByRole('button', { name: 'Move all items' }))
 
     await waitFor(async () => {

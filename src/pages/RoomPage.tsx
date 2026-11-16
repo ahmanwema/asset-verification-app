@@ -15,7 +15,6 @@ import {
   Field,
   ProgressBar,
   SectionTitle,
-  Select,
   Sheet,
   TextArea,
   TextInput,
@@ -37,6 +36,12 @@ export default function RoomPage() {
   const [moveSheet, setMoveSheet] = useState(false)
   const [moveEntryIds, setMoveEntryIds] = useState<Set<string>>(new Set())
   const [moveTargetRoomId, setMoveTargetRoomId] = useState('')
+  const [moveTargetBlockId, setMoveTargetBlockId] = useState('')
+  const [moveTargetFloorId, setMoveTargetFloorId] = useState('')
+  const [moveBlockQuery, setMoveBlockQuery] = useState('')
+  const [moveFloorQuery, setMoveFloorQuery] = useState('')
+  const [moveRoomQuery, setMoveRoomQuery] = useState('')
+  const [moveDestinationFocus, setMoveDestinationFocus] = useState<'block' | 'floor' | 'room' | null>(null)
   const [moveError, setMoveError] = useState<string | null>(null)
 
   const data = useLiveQuery(async () => {
@@ -112,6 +117,38 @@ export default function RoomPage() {
         a.sortOrder - b.sortOrder
       )
     })
+  const targetRoomBlockId = (target: typeof room) =>
+    target.blockId ?? floorById.get(target.floorId)?.blockId ?? ''
+  const targetBlockIds = new Set(targetRooms.map(targetRoomBlockId))
+  const targetBlocks = blocks
+    .filter((candidate) => targetBlockIds.has(candidate.id))
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+  const targetFloorIds = new Set(
+    targetRooms
+      .filter((candidate) => targetRoomBlockId(candidate) === moveTargetBlockId)
+      .map((candidate) => candidate.floorId),
+  )
+  const targetFloors = floors
+    .filter((candidate) => targetFloorIds.has(candidate.id))
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+  const destinationRooms = targetRooms.filter(
+    (candidate) =>
+      targetRoomBlockId(candidate) === moveTargetBlockId && candidate.floorId === moveTargetFloorId,
+  )
+  const matchesMoveQuery = (name: string, code: string, query: string) =>
+    `${name} ${code}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+  const moveBlockSuggestions = targetBlocks
+    .filter((candidate) => matchesMoveQuery(candidate.name, candidate.code, moveBlockQuery))
+    .slice(0, 8)
+  const moveFloorSuggestions = targetFloors
+    .filter((candidate) => matchesMoveQuery(candidate.name, candidate.code, moveFloorQuery))
+    .slice(0, 8)
+  const moveRoomSuggestions = destinationRooms
+    .filter((candidate) => matchesMoveQuery(candidate.name, candidate.code, moveRoomQuery))
+    .slice(0, 8)
+  const selectedMoveBlock = blockById.get(moveTargetBlockId)
+  const selectedMoveFloor = floorById.get(moveTargetFloorId)
+  const selectedMoveRoom = rooms.find((candidate) => candidate.id === moveTargetRoomId)
   const selectedMoveEntries = moveCandidates.filter((entry) => moveEntryIds.has(entry.id))
   const selectedMoveItems = selectedMoveEntries.reduce(
     (sum, entry) => sum + (entry.notPresent ? 0 : entry.quantity),
@@ -127,6 +164,12 @@ export default function RoomPage() {
   function openMoveItems() {
     setMoveEntryIds(new Set())
     setMoveTargetRoomId('')
+    setMoveTargetBlockId('')
+    setMoveTargetFloorId('')
+    setMoveBlockQuery('')
+    setMoveFloorQuery('')
+    setMoveRoomQuery('')
+    setMoveDestinationFocus(null)
     setMoveError(null)
     setMoveSheet(true)
   }
@@ -145,6 +188,8 @@ export default function RoomPage() {
       setMoveSheet(false)
       setMoveEntryIds(new Set())
       setMoveTargetRoomId('')
+      setMoveTargetBlockId('')
+      setMoveTargetFloorId('')
       flash(t('room.moveSuccess', { cards: result.movedCards, items: result.movedItems }))
     } catch (error) {
       if (error instanceof MoveEntriesError && error.code === 'destination-conflict') {
@@ -317,7 +362,7 @@ export default function RoomPage() {
       </div>
 
       <Sheet open={moveSheet} onClose={() => setMoveSheet(false)} title={t('room.moveItems')}>
-        <div className="space-y-4">
+        <div className="max-h-[calc(100dvh-7rem)] space-y-4 overflow-y-auto pr-1">
           <p className="text-sm text-slate-600">{t('room.moveItemsHint')}</p>
 
           <div className="flex items-center justify-between gap-3">
@@ -377,22 +422,226 @@ export default function RoomPage() {
             })}
           </div>
 
-          <Field label={t('room.moveDestination')}>
-            <Select
-              value={moveTargetRoomId}
-              onChange={(event) => {
-                setMoveTargetRoomId(event.target.value)
-                setMoveError(null)
-              }}
-            >
-              <option value="">{t('room.chooseDestination')}</option>
-              {targetRooms.map((target) => (
-                <option key={target.id} value={target.id}>
-                  {targetRoomLabel(target)}
-                </option>
+          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div>
+              <p className="text-sm font-bold text-slate-800">{t('room.moveDestination')}</p>
+              <p className="mt-0.5 text-xs text-slate-500">{t('room.moveDestinationHint')}</p>
+            </div>
+
+            {selectedMoveBlock ? (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2">
+                <span className="min-w-0">
+                  <span className="block text-[10px] font-bold uppercase text-brand-600">
+                    {t('room.moveDestinationBlock')}
+                  </span>
+                  <span className="block truncate text-sm font-semibold text-slate-800">{selectedMoveBlock.name}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMoveTargetBlockId('')
+                    setMoveTargetFloorId('')
+                    setMoveTargetRoomId('')
+                    setMoveBlockQuery('')
+                    setMoveFloorQuery('')
+                    setMoveRoomQuery('')
+                    setMoveError(null)
+                  }}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xl text-brand-700 hover:bg-brand-100"
+                  aria-label={t('room.changeMoveDestinationBlock')}
+                >
+                  &times;
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <Field label={t('room.moveDestinationBlock')}>
+                  <TextInput
+                    value={moveBlockQuery}
+                    onChange={(event) => setMoveBlockQuery(event.target.value)}
+                    onFocus={() => setMoveDestinationFocus('block')}
+                    onBlur={() => setMoveDestinationFocus(null)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && moveBlockSuggestions[0]) {
+                        event.preventDefault()
+                        setMoveTargetBlockId(moveBlockSuggestions[0].id)
+                        setMoveBlockQuery('')
+                        setMoveDestinationFocus(null)
+                      }
+                    }}
+                    placeholder={t('room.searchMoveBlock')}
+                    type="search"
+                    autoComplete="off"
+                  />
+                </Field>
+                {moveDestinationFocus === 'block' && moveBlockSuggestions.length > 0 && (
+                  <div className="absolute inset-x-0 top-full z-30 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                    {moveBlockSuggestions.map((candidate) => (
+                      <button
+                        key={candidate.id}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          setMoveTargetBlockId(candidate.id)
+                          setMoveBlockQuery('')
+                          setMoveDestinationFocus(null)
+                          setMoveError(null)
+                        }}
+                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-brand-50"
+                      >
+                        <span className="w-14 shrink-0 text-[10px] font-bold uppercase text-slate-400">
+                          {t('room.moveDestinationBlock')}
+                        </span>
+                        <span className="min-w-0 truncate text-sm font-semibold text-slate-800">{candidate.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {selectedMoveBlock &&
+              (selectedMoveFloor ? (
+                <div className="flex items-center justify-between gap-2 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2">
+                  <span className="min-w-0">
+                    <span className="block text-[10px] font-bold uppercase text-brand-600">
+                      {t('room.moveDestinationFloor')}
+                    </span>
+                    <span className="block truncate text-sm font-semibold text-slate-800">{selectedMoveFloor.name}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMoveTargetFloorId('')
+                      setMoveTargetRoomId('')
+                      setMoveFloorQuery('')
+                      setMoveRoomQuery('')
+                      setMoveError(null)
+                    }}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xl text-brand-700 hover:bg-brand-100"
+                    aria-label={t('room.changeMoveDestinationFloor')}
+                  >
+                    &times;
+                  </button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <Field label={t('room.moveDestinationFloor')}>
+                    <TextInput
+                      value={moveFloorQuery}
+                      onChange={(event) => setMoveFloorQuery(event.target.value)}
+                      onFocus={() => setMoveDestinationFocus('floor')}
+                      onBlur={() => setMoveDestinationFocus(null)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && moveFloorSuggestions[0]) {
+                          event.preventDefault()
+                          setMoveTargetFloorId(moveFloorSuggestions[0].id)
+                          setMoveFloorQuery('')
+                          setMoveDestinationFocus(null)
+                        }
+                      }}
+                      placeholder={t('room.searchMoveFloor')}
+                      type="search"
+                      autoComplete="off"
+                    />
+                  </Field>
+                  {moveDestinationFocus === 'floor' && moveFloorSuggestions.length > 0 && (
+                    <div className="absolute inset-x-0 top-full z-30 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                      {moveFloorSuggestions.map((candidate) => (
+                        <button
+                          key={candidate.id}
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => {
+                            setMoveTargetFloorId(candidate.id)
+                            setMoveFloorQuery('')
+                            setMoveDestinationFocus(null)
+                            setMoveError(null)
+                          }}
+                          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-brand-50"
+                        >
+                          <span className="w-14 shrink-0 text-[10px] font-bold uppercase text-slate-400">
+                            {t('room.moveDestinationFloor')}
+                          </span>
+                          <span className="min-w-0 truncate text-sm font-semibold text-slate-800">{candidate.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ))}
-            </Select>
-          </Field>
+
+            {selectedMoveFloor &&
+              (selectedMoveRoom ? (
+                <div className="flex items-center justify-between gap-2 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2">
+                  <span className="min-w-0">
+                    <span className="block text-[10px] font-bold uppercase text-brand-600">
+                      {t('room.moveDestinationRoom')}
+                    </span>
+                    <span className="block truncate text-sm font-semibold text-slate-800">
+                      {targetRoomLabel(selectedMoveRoom)}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMoveTargetRoomId('')
+                      setMoveRoomQuery('')
+                      setMoveError(null)
+                    }}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xl text-brand-700 hover:bg-brand-100"
+                    aria-label={t('room.changeMoveDestinationRoom')}
+                  >
+                    &times;
+                  </button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <Field label={t('room.moveDestinationRoom')}>
+                    <TextInput
+                      value={moveRoomQuery}
+                      onChange={(event) => setMoveRoomQuery(event.target.value)}
+                      onFocus={() => setMoveDestinationFocus('room')}
+                      onBlur={() => setMoveDestinationFocus(null)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && moveRoomSuggestions[0]) {
+                          event.preventDefault()
+                          setMoveTargetRoomId(moveRoomSuggestions[0].id)
+                          setMoveRoomQuery('')
+                          setMoveDestinationFocus(null)
+                        }
+                      }}
+                      placeholder={t('room.searchMoveRoom')}
+                      type="search"
+                      autoComplete="off"
+                    />
+                  </Field>
+                  {moveDestinationFocus === 'room' && moveRoomSuggestions.length > 0 && (
+                    <div className="absolute inset-x-0 top-full z-30 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                      {moveRoomSuggestions.map((candidate) => (
+                        <button
+                          key={candidate.id}
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => {
+                            setMoveTargetRoomId(candidate.id)
+                            setMoveRoomQuery('')
+                            setMoveDestinationFocus(null)
+                            setMoveError(null)
+                          }}
+                          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-brand-50"
+                        >
+                          <span className="w-14 shrink-0 text-[10px] font-bold uppercase text-slate-400">
+                            {t('room.moveDestinationRoom')}
+                          </span>
+                          <span className="min-w-0 truncate text-sm font-semibold text-slate-800">{candidate.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+          </div>
 
           {moveEntryIds.size > 0 && (
             <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
