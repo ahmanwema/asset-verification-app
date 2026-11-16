@@ -1,5 +1,6 @@
 import { db } from '../db/db'
 import { itemDetailFor } from './entries'
+import { assetCodeFor, formatTag, parseTag } from './tags'
 import type { Condition } from '../types'
 
 export type LabelScope = 'room' | 'floor' | 'exercise'
@@ -17,6 +18,9 @@ export interface LabelData {
   photoIds: string[]
   /** The entry this tag belongs to, so its photos can be shown before printing. */
   entryId: string
+  roomId: string
+  /** False when the label still contains codes from a room it was moved out of. */
+  tagMatchesLocation: boolean
   condition: Condition
 }
 
@@ -136,9 +140,20 @@ export async function collectLabels(opts: {
     const description = e.isUnlistedItem
       ? (e.unlistedItemName ?? 'Unlisted item')
       : (typeById.get(e.assetTypeId ?? '')?.name ?? 'Asset')
+    const assetCode = assetCodeFor(e, typeById.get(e.assetTypeId ?? '')).trim().toUpperCase()
     e.tagNumbers.forEach((tag, i) => {
       const detail = itemDetailFor(e, tag, i)
       const photoIds = [...new Set([...detail.photoIds, ...detail.representativePhotoIds])]
+      const parsed = parseTag(tag)
+      const tagMatchesLocation = Boolean(
+        parsed && floor && room && tag.trim().toUpperCase() === formatTag(
+          assetCode,
+          floor.code.trim().toUpperCase(),
+          room.code.trim().toUpperCase(),
+          parsed.seq,
+          block?.code.trim().toUpperCase(),
+        ),
+      )
       labels.push({
         tag,
         description,
@@ -151,6 +166,8 @@ export async function collectLabels(opts: {
         photoCount: photoIds.length,
         photoIds,
         entryId: e.id,
+        roomId: e.roomId,
+        tagMatchesLocation,
         condition: e.condition,
         blockOrder: block?.sortOrder ?? Number.MAX_SAFE_INTEGER,
         floorOrder: floor?.sortOrder ?? Number.MAX_SAFE_INTEGER,

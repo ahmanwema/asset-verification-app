@@ -473,7 +473,21 @@ describe('moving recorded items to the correct room', () => {
       expect(entries.filter((entry) => entry.roomId === source!.id)).toHaveLength(0)
     })
     expect(await screen.findByText('0/16 items checked')).toBeTruthy()
-  }, 15_000)
+
+    fireEvent.click(screen.getByRole('link', { name: /labels/i }))
+    expect(await screen.findByText('SC-MAIN-1F-P3-001')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Update tag names' }))
+    const retagDialog = await screen.findByRole('dialog', { name: 'Match tags to this room' })
+    expect(within(retagDialog).getByText(/current room code for P4/i)).toBeTruthy()
+    fireEvent.click(within(retagDialog).getByRole('button', { name: 'Update tag names' }))
+
+    expect(await screen.findByText('SC-MAIN-1F-P4-001')).toBeTruthy()
+    expect(screen.queryByText('SC-MAIN-1F-P3-001')).toBeNull()
+    await waitFor(async () => {
+      const movedChair = await db.entries.filter((entry) => entry.quantity === 3).first()
+      expect(movedChair?.itemDetails?.map((detail) => detail.tagNumber)).toEqual(movedChair?.tagNumbers)
+    })
+  }, 20_000)
 })
 
 describe('capture & identify', () => {

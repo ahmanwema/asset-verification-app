@@ -10,6 +10,7 @@ import {
   deleteEntry,
   markNotPresent,
   moveEntriesToRoom,
+  retagRoomEntries,
   reopenRoom,
   resolveConflict,
   saveEntry,
@@ -244,6 +245,62 @@ describe('moving recorded items between rooms', () => {
     expect((await db.entries.get(table.id))?.roomId).toBe(fx.room.id)
     expect((await db.signoffs.where('roomId').equals(fx.room.id).first())?.deleted).toBe(true)
     expect((await db.signoffs.where('roomId').equals(fx.room2.id).first())?.deleted).toBe(true)
+  })
+
+  it('can reissue moved tags for the destination room without losing per-item data', async () => {
+    const chair = await saveEntry(draft({
+      quantity: 2,
+      itemDetails: [
+        { brand: 'Furnico', model: 'A1', serialNumber: 'C-1', photoIds: ['photo-1'], representativePhotoIds: [] },
+        { brand: 'Furnico', model: 'A2', serialNumber: 'C-2', photoIds: ['photo-2'], representativePhotoIds: [] },
+      ],
+    }))
+    const oldTags = chair.tagNumbers
+    await db.entries.update(chair.id, {
+      financialRecords: [{
+        tagNumber: oldTags[0],
+        acquisitionDate: '2025-01-01',
+        availableForUseDate: '2025-01-01',
+        originalCost: 100,
+        residualValue: 0,
+        usefulLifeMonths: 60,
+        depreciationMethod: 'diminishing_balance',
+        annualDepreciationRate: 0,
+        openingAccumulatedDepreciation: 0,
+        openingBalanceDate: '',
+        supplier: '',
+        invoiceNumber: '',
+        fundingSource: '',
+        notes: '',
+        updatedAt: Date.now(),
+        updatedBy: fx.inspector.id,
+      }],
+    })
+    await moveEntriesToRoom({
+      sourceRoomId: fx.room.id,
+      targetRoomId: fx.room2.id,
+      entryIds: [chair.id],
+      actorId: fx.inspector.id,
+    })
+
+    const result = await retagRoomEntries({ roomId: fx.room2.id, actorId: fx.inspector2.id })
+    expect(result).toEqual({ changedEntries: 1, changedTags: 2 })
+    const retagged = (await db.entries.get(chair.id))!
+    expect(retagged.tagNumbers).toEqual(['SC-1F-P4-001', 'SC-1F-P4-002'])
+    expect(retagged.itemDetails?.map((detail) => detail.tagNumber)).toEqual(retagged.tagNumbers)
+    expect(retagged.itemDetails?.map((detail) => detail.serialNumber)).toEqual(['C-1', 'C-2'])
+    expect(retagged.itemDetails?.map((detail) => detail.photoIds)).toEqual([['photo-1'], ['photo-2']])
+    expect(retagged.financialRecords?.[0].tagNumber).toBe(retagged.tagNumbers[0])
+    expect(retagged.editHistory.at(-1)).toMatchObject({
+      field: 'tagNumbers',
+      oldValue: oldTags.join(', '),
+      newValue: retagged.tagNumbers.join(', '),
+      editedBy: fx.inspector2.id,
+    })
+    expect(await retagRoomEntries({ roomId: fx.room2.id, actorId: fx.inspector2.id })).toEqual({
+      changedEntries: 0,
+      changedTags: 0,
+    })
   })
 
   it('moves every selected card together', async () => {

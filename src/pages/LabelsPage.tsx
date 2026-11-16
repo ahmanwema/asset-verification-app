@@ -13,6 +13,7 @@ import {
   type LabelSearchTerm,
 } from '../lib/labels'
 import { photoBlob } from '../lib/photos'
+import { retagRoomEntries } from '../lib/entries'
 import { ensureEntryPhotos } from '../lib/sync'
 import { useSession } from '../state/session'
 import { useT } from '../i18n'
@@ -49,7 +50,7 @@ function ensureLabelPhotos(entryId: string): Promise<number> {
 
 export default function LabelsPage() {
   const t = useT()
-  const { exercise } = useSession()
+  const { exercise, inspector } = useSession()
   const [scope, setScope] = useState<LabelScope>('exercise')
   const [floorId, setFloorId] = useState('')
   const [roomId, setRoomId] = useState('')
@@ -61,6 +62,7 @@ export default function LabelsPage() {
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [selected, setSelected] = useState<LabelData | null>(null)
+  const [retagRoom, setRetagRoom] = useState<{ id: string; name: string; count: number } | null>(null)
 
   const floors = useLiveQuery(async () => {
     if (!exercise) return []
@@ -98,15 +100,28 @@ export default function LabelsPage() {
 
   const visibleLabels = filteredLabels.slice(0, MAX_VISIBLE)
   const groups = useMemo(() => {
-    const grouped = new Map<string, { block: string; floor: string; room: string; labels: LabelData[] }>()
+    const grouped = new Map<string, { roomId: string; block: string; floor: string; room: string; labels: LabelData[] }>()
     for (const label of visibleLabels) {
-      const key = `${label.block}\u0000${label.floor}\u0000${label.room}`
-      const group = grouped.get(key) ?? { block: label.block, floor: label.floor, room: label.room, labels: [] }
+      const key = label.roomId
+      const group = grouped.get(key) ?? {
+        roomId: label.roomId,
+        block: label.block,
+        floor: label.floor,
+        room: label.room,
+        labels: [],
+      }
       group.labels.push(label)
       grouped.set(key, group)
     }
     return [...grouped.values()]
   }, [visibleLabels])
+  const mismatchedTagsByRoom = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const label of sheet?.labels ?? []) {
+      if (!label.tagMatchesLocation) counts.set(label.roomId, (counts.get(label.roomId) ?? 0) + 1)
+    }
+    return counts
+  }, [sheet])
 
   const hasFilters = Boolean(query.trim() || searchTerms.length || condition || photoFilter !== 'all')
 
@@ -121,6 +136,22 @@ export default function LabelsPage() {
         setToast(t('labels.allowPopups'))
         setTimeout(() => setToast(null), 2600)
       }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function updateRoomTagNames() {
+    if (!retagRoom || !inspector) return
+    setBusy(true)
+    try {
+      const result = await retagRoomEntries({ roomId: retagRoom.id, actorId: inspector.id })
+      setRetagRoom(null)
+      setToast(t('labels.tagNamesUpdated', { n: result.changedTags, room: retagRoom.name }))
+      setTimeout(() => setToast(null), 2600)
+    } catch {
+      setToast(t('labels.tagNamesFailed'))
+      setTimeout(() => setToast(null), 2600)
     } finally {
       setBusy(false)
     }
@@ -321,7 +352,7 @@ export default function LabelsPage() {
 
           <div className="space-y-3">
             {groups.map((group) => (
-              <section key={`${group.block}|${group.floor}|${group.room}`}>
+              <section key={group.roomId}>
                 <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
                   <div className="min-w-0">
                     <p className="truncate text-xs font-bold text-slate-800">{group.room || '—'}</p>
@@ -329,9 +360,24 @@ export default function LabelsPage() {
                       {[group.block, group.floor].filter(Boolean).join(' · ')}
                     </p>
                   </div>
-                  <span className="chip shrink-0 bg-slate-100 text-slate-600">
-                    {t('labels.count', { n: group.labels.length })}
-                  </span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {inspector?.role === 'admin' && (mismatchedTagsByRoom.get(group.roomId) ?? 0) > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setRetagRoom({
+                          id: group.roomId,
+                          name: group.room,
+                          count: mismatchedTagsByRoom.get(group.roomId) ?? 0,
+                        })}
+                        className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-800 hover:bg-amber-100"
+                      >
+                        {t('labels.updateTagNames')}
+                      </button>
+                    )}
+                    <span className="chip bg-slate-100 text-slate-600">
+                      {t('labels.count', { n: group.labels.length })}
+                    </span>
+                  </div>
                 </div>
 
                 <Card className="divide-y divide-slate-100 p-0">
@@ -391,6 +437,26 @@ export default function LabelsPage() {
       )}
 
       <LabelPhotoSheet label={selected} onClose={() => setSelected(null)} />
+      <Sheet
+        open={Boolean(retagRoom)}
+        onClose={() => setRetagRoom(null)}
+        title={t('labels.updateTagNamesTitle')}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-700">
+            {t('labels.updateTagNamesConfirm', { n: retagRoom?.count ?? 0, room: retagRoom?.name ?? '' })}
+          </p>
+          <p className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900">{t('labels.updateTagNamesHint')}</p>
+          <div className="flex gap-2">
+            <Button variant="secondary" full onClick={() => setRetagRoom(null)} disabled={busy}>
+              {t('common.cancel')}
+            </Button>
+            <Button full onClick={() => void updateRoomTagNames()} disabled={busy || !retagRoom}>
+              {t('labels.updateTagNamesAction')}
+            </Button>
+          </div>
+        </div>
+      </Sheet>
       <Toast message={toast} />
     </div>
   )

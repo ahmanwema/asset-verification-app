@@ -1,5 +1,5 @@
 import { db, uid } from '../db/db'
-import { allocateTagNumbers, deriveCode } from './tags'
+import { allocateTagNumbers, assetCodeFor, deriveCode, formatTag, parseTag } from './tags'
 import { breakdownIsValid } from './queries'
 import type {
   AssetType,
@@ -437,6 +437,124 @@ export async function moveEntriesToRoom(opts: {
       movedCards: moved.length,
       movedItems: moved.reduce((sum, entry) => sum + (entry.notPresent ? 0 : entry.quantity), 0),
     }
+  })
+}
+
+export class RetagRoomError extends Error {}
+
+/**
+ * Reissues every mismatched tag in a room using that room's current location
+ * codes. Tags that already match the room are kept, while per-item details and
+ * financial records follow any tag that changes.
+ */
+export async function retagRoomEntries(opts: {
+  roomId: string
+  actorId: string
+}): Promise<{ changedEntries: number; changedTags: number }> {
+  return db.transaction('rw', db.rooms, db.floors, db.blocks, db.assetTypes, db.entries, async () => {
+    const room = await db.rooms.get(opts.roomId)
+    if (!room) throw new RetagRoomError('room-not-found')
+    const floor = await db.floors.get(room.floorId)
+    if (!floor) throw new RetagRoomError('floor-not-found')
+    const blockId = room.blockId ?? floor.blockId
+    const [block, assetTypes, allEntries] = await Promise.all([
+      blockId ? db.blocks.get(blockId) : undefined,
+      db.assetTypes.toArray(),
+      db.entries.where('exerciseId').equals(room.exerciseId).toArray(),
+    ])
+    const assetTypeById = new Map(assetTypes.map((assetType) => [assetType.id, assetType]))
+    const floorCode = floor.code.trim().toUpperCase()
+    const roomCode = room.code.trim().toUpperCase()
+    const blockCode = block?.code.trim().toUpperCase()
+    const entries = allEntries
+      .filter((entry) => !entry.deleted && entry.roomId === room.id && entry.tagNumbers.length > 0)
+      .sort((a, b) => a.inspectedAt - b.inspectedAt || a.id.localeCompare(b.id))
+    const outsideTags = new Set(
+      allEntries
+        .filter((entry) => !entry.deleted && entry.roomId !== room.id)
+        .flatMap((entry) => entry.tagNumbers.map((tag) => tag.trim().toUpperCase())),
+    )
+    const assignedTags = new Set<string>()
+    const usedSequences = new Map<string, Set<number>>()
+    const retainedByEntry = new Map<string, Map<number, string>>()
+
+    // Keep matching tags first. This ensures moved tags are allocated around
+    // labels that already belong to the destination room.
+    for (const entry of entries) {
+      const assetCode = assetCodeFor(entry, assetTypeById.get(entry.assetTypeId ?? '')).trim().toUpperCase()
+      const used = usedSequences.get(assetCode) ?? new Set<number>()
+      usedSequences.set(assetCode, used)
+      const retained = new Map<number, string>()
+      entry.tagNumbers.forEach((rawTag, index) => {
+        const tag = rawTag.trim().toUpperCase()
+        const parsed = parseTag(tag)
+        if (!parsed) return
+        const expected = formatTag(assetCode, floorCode, roomCode, parsed.seq, blockCode)
+        if (tag !== expected || used.has(parsed.seq) || assignedTags.has(tag) || outsideTags.has(tag)) return
+        used.add(parsed.seq)
+        assignedTags.add(tag)
+        retained.set(index, tag)
+      })
+      retainedByEntry.set(entry.id, retained)
+    }
+
+    const updatedAt = Date.now()
+    let changedTags = 0
+    const updatedEntries: InspectionEntry[] = []
+    for (const entry of entries) {
+      const assetCode = assetCodeFor(entry, assetTypeById.get(entry.assetTypeId ?? '')).trim().toUpperCase()
+      const used = usedSequences.get(assetCode) ?? new Set<number>()
+      usedSequences.set(assetCode, used)
+      const retained = retainedByEntry.get(entry.id) ?? new Map<number, string>()
+      let nextSequence = 1
+      const newTags = entry.tagNumbers.map((oldTag, index) => {
+        const kept = retained.get(index)
+        if (kept) return kept
+        let candidate = ''
+        while (!candidate) {
+          if (nextSequence > 9999) throw new RetagRoomError('tag-limit')
+          const next = formatTag(assetCode, floorCode, roomCode, nextSequence, blockCode)
+          if (!used.has(nextSequence) && !assignedTags.has(next) && !outsideTags.has(next)) {
+            candidate = next
+            used.add(nextSequence)
+            assignedTags.add(next)
+          }
+          nextSequence += 1
+        }
+        if (candidate !== oldTag) changedTags += 1
+        return candidate
+      })
+      if (newTags.every((tag, index) => tag === entry.tagNumbers[index])) continue
+
+      const replacements = new Map(entry.tagNumbers.map((tag, index) => [tag, newTags[index]]))
+      updatedEntries.push({
+        ...entry,
+        tagNumbers: newTags,
+        itemDetails: entry.itemDetails?.map((detail, index) => ({
+          ...detail,
+          tagNumber: newTags[index] ?? replacements.get(detail.tagNumber) ?? detail.tagNumber,
+        })),
+        financialRecords: entry.financialRecords?.map((record) => ({
+          ...record,
+          tagNumber: replacements.get(record.tagNumber) ?? record.tagNumber,
+        })),
+        editHistory: [
+          ...(entry.editHistory ?? []),
+          {
+            field: 'tagNumbers',
+            oldValue: entry.tagNumbers.join(', '),
+            newValue: newTags.join(', '),
+            editedBy: opts.actorId,
+            editedAt: updatedAt,
+          },
+        ].slice(-EDIT_HISTORY_LIMIT),
+        updatedAt,
+        syncStatus: 'pending',
+      })
+    }
+
+    if (updatedEntries.length > 0) await db.entries.bulkPut(updatedEntries)
+    return { changedEntries: updatedEntries.length, changedTags }
   })
 }
 
