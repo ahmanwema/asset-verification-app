@@ -201,7 +201,10 @@ export default function LabelsPage() {
     try {
       const plan = await planRoomTagNames(id)
       const plannedByTag = new Map(plan.map((change) => [`${change.entryId}\u0000${change.currentTag}`, change]))
-      const roomLabels = (sheet?.labels ?? []).filter((label) => label.roomId === id)
+      // Respect the active Labels filters. If the user narrowed Reception to
+      // two benches, the editor must not unexpectedly include every other
+      // asset in Reception.
+      const roomLabels = filteredLabels.filter((label) => label.roomId === id)
       setTagChanges(roomLabels.map((label) => {
         const planned = plannedByTag.get(`${label.entryId}\u0000${label.tag}`)
         return {

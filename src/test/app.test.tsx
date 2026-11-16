@@ -1296,6 +1296,13 @@ describe('finding labels before printing', () => {
     expect(screen.getAllByText('Showing 1 of 2')).toHaveLength(2)
     expect(screen.getByText('SC-MAIN-1F-P3-002')).toBeTruthy()
 
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tag names' }))
+    const editTags = await screen.findByRole('dialog', { name: 'Edit tag names' })
+    expect(within(editTags).getByText(/1 matching tag name/i)).toBeTruthy()
+    expect(within(editTags).getByText('SC-MAIN-1F-P3-002')).toBeTruthy()
+    expect(within(editTags).queryByText('SC-MAIN-1F-P3-001')).toBeNull()
+    fireEvent.click(within(editTags).getByRole('button', { name: 'Cancel' }))
+
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
     fireEvent.change(screen.getByLabelText('Photos'), { target: { value: 'with' } })
     expect(await screen.findByText(/nothing matches/i)).toBeTruthy()
