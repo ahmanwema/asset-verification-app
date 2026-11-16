@@ -645,6 +645,239 @@ export async function retagRoomEntries(opts: {
   })
 }
 
+export interface AssetNameSelection {
+  entryId: string
+  tagNumber: string
+}
+
+export type AssetNameTarget =
+  | { kind: 'catalog'; assetTypeId: string }
+  | { kind: 'custom'; name: string }
+
+export type ChangeAssetNamesErrorCode =
+  | 'no-selection'
+  | 'room-not-found'
+  | 'asset-not-found'
+  | 'invalid-selection'
+  | 'invalid-name'
+
+export class ChangeAssetNamesError extends Error {
+  constructor(readonly code: ChangeAssetNamesErrorCode) {
+    super(code)
+  }
+}
+
+function itemName(entry: InspectionEntry, assetTypes: Map<string, AssetType>): string {
+  return entry.isUnlistedItem
+    ? (entry.unlistedItemName?.trim() || 'Unlisted item')
+    : (assetTypes.get(entry.assetTypeId ?? '')?.name ?? 'Asset')
+}
+
+function itemPhotoIds(details: ItemDetail[]): string[] {
+  return [...new Set(details.flatMap((detail) => [...detail.photoIds, ...detail.representativePhotoIds]))]
+}
+
+/**
+ * Corrects the asset name of individual tagged items without changing their
+ * identity. A quantity card is split when only some of its tags are selected,
+ * and selected tags are merged into an existing card for the target type.
+ */
+export async function changeSelectedAssetNames(opts: {
+  roomId: string
+  actorId: string
+  selections: AssetNameSelection[]
+  target: AssetNameTarget
+}): Promise<{ changedItems: number; changedEntries: number }> {
+  const requested = opts.selections.filter(
+    (selection, index, rows) =>
+      rows.findIndex(
+        (candidate) => candidate.entryId === selection.entryId && candidate.tagNumber === selection.tagNumber,
+      ) === index,
+  )
+  if (requested.length === 0) throw new ChangeAssetNamesError('no-selection')
+
+  return db.transaction('rw', db.rooms, db.exercises, db.assetTypes, db.entries, async () => {
+    const room = await db.rooms.get(opts.roomId)
+    if (!room) throw new ChangeAssetNamesError('room-not-found')
+    const exercise = await db.exercises.get(room.exerciseId)
+    if (!exercise) throw new ChangeAssetNamesError('room-not-found')
+
+    const assetTypeRows = await db.assetTypes.where('orgId').equals(exercise.orgId).toArray()
+    const assetTypeById = new Map(assetTypeRows.map((assetType) => [assetType.id, assetType]))
+    const targetAsset = opts.target.kind === 'catalog' ? assetTypeById.get(opts.target.assetTypeId) : undefined
+    const customName = opts.target.kind === 'custom' ? opts.target.name.trim().replace(/\s+/g, ' ') : ''
+    if (opts.target.kind === 'catalog' && (!targetAsset || !targetAsset.active)) {
+      throw new ChangeAssetNamesError('asset-not-found')
+    }
+    if (opts.target.kind === 'custom' && (!customName || customName.length > 120)) {
+      throw new ChangeAssetNamesError('invalid-name')
+    }
+
+    const roomEntries = (await db.entries.where('roomId').equals(room.id).toArray()).filter(
+      (entry) => !entry.deleted && entry.exerciseId === room.exerciseId,
+    )
+    const entryById = new Map(roomEntries.map((entry) => [entry.id, entry]))
+    const selectedByEntry = new Map<string, Set<string>>()
+    for (const selection of requested) {
+      const entry = entryById.get(selection.entryId)
+      if (!entry || entry.tagNumbers.filter((tag) => tag === selection.tagNumber).length !== 1) {
+        throw new ChangeAssetNamesError('invalid-selection')
+      }
+      const tags = selectedByEntry.get(entry.id) ?? new Set<string>()
+      tags.add(selection.tagNumber)
+      selectedByEntry.set(entry.id, tags)
+    }
+
+    const targetMatches = (entry: InspectionEntry) =>
+      opts.target.kind === 'catalog'
+        ? !entry.isUnlistedItem && entry.assetTypeId === targetAsset!.id
+        : entry.isUnlistedItem &&
+          (entry.unlistedItemName ?? '').trim().localeCompare(customName, undefined, { sensitivity: 'base' }) === 0
+
+    // Selecting an item that already has the requested name is a harmless no-op.
+    for (const [entryId] of [...selectedByEntry]) {
+      if (targetMatches(entryById.get(entryId)!)) selectedByEntry.delete(entryId)
+    }
+    if (selectedByEntry.size === 0) return { changedItems: 0, changedEntries: 0 }
+
+    const targetEntry = roomEntries.find(targetMatches)
+    const selectedUnits: Array<{
+      entry: InspectionEntry
+      tag: string
+      detail: ItemDetail
+      accepted: boolean
+    }> = []
+    for (const [entryId, tags] of selectedByEntry) {
+      const entry = entryById.get(entryId)!
+      for (const tag of entry.tagNumbers) {
+        if (!tags.has(tag)) continue
+        selectedUnits.push({
+          entry,
+          tag,
+          detail: itemDetailFor(entry, tag),
+          accepted: Boolean(entry.acceptedTagNumbers?.includes(tag)),
+        })
+      }
+    }
+
+    const updatedAt = Date.now()
+    const updatedEntries: InspectionEntry[] = []
+    for (const [entryId, selectedTags] of selectedByEntry) {
+      const entry = entryById.get(entryId)!
+      const remainingTags = entry.tagNumbers.filter((tag) => !selectedTags.has(tag))
+      if (remainingTags.length === 0) {
+        updatedEntries.push({
+          ...entry,
+          deleted: true,
+          updatedAt,
+          syncStatus: 'pending',
+        })
+        continue
+      }
+
+      const remainingDetails = remainingTags.map((tag) => itemDetailFor(entry, tag))
+      const replacement: InspectionEntry = {
+        ...entry,
+        quantity: remainingTags.length,
+        tagNumbers: remainingTags,
+        acceptedTagNumbers: entry.acceptedTagNumbers?.filter((tag) => !selectedTags.has(tag)),
+        itemDetails: remainingDetails,
+        serialNumbers: remainingDetails.map((detail) => detail.serialNumber.trim()).filter(Boolean),
+        brand: remainingDetails[0]?.brand ?? '',
+        model: remainingDetails[0]?.model ?? '',
+        photoIds: itemPhotoIds(remainingDetails),
+        financialRecords: entry.financialRecords?.filter((record) => !selectedTags.has(record.tagNumber)),
+        conditionBreakdown: undefined,
+        updatedAt,
+        syncStatus: 'pending',
+      }
+      replacement.editHistory = [
+        ...(entry.editHistory ?? []),
+        ...diffEntries(entry, replacement, opts.actorId),
+      ].slice(-EDIT_HISTORY_LIMIT)
+      updatedEntries.push(replacement)
+    }
+
+    const selectedDetails = selectedUnits.map((unit) => unit.detail)
+    const selectedTags = selectedUnits.map((unit) => unit.tag)
+    const selectedFinancialRecords = selectedUnits.flatMap((unit) =>
+      unit.entry.financialRecords?.filter((record) => record.tagNumber === unit.tag) ?? [],
+    )
+    const targetName = targetAsset?.name ?? customName
+    let destination: InspectionEntry
+
+    if (targetEntry) {
+      const existingDetails = targetEntry.tagNumbers.map((tag) => itemDetailFor(targetEntry, tag))
+      const allDetails = [...existingDetails, ...selectedDetails]
+      const allTags = [...targetEntry.tagNumbers, ...selectedTags]
+      const replacement: InspectionEntry = {
+        ...targetEntry,
+        quantity: allTags.length,
+        tagNumbers: allTags,
+        acceptedTagNumbers: [
+          ...new Set([
+            ...(targetEntry.acceptedTagNumbers ?? []),
+            ...selectedUnits.filter((unit) => unit.accepted).map((unit) => unit.tag),
+          ]),
+        ],
+        itemDetails: allDetails,
+        serialNumbers: allDetails.map((detail) => detail.serialNumber.trim()).filter(Boolean),
+        brand: allDetails[0]?.brand ?? '',
+        model: allDetails[0]?.model ?? '',
+        photoIds: itemPhotoIds(allDetails),
+        financialRecords: [...(targetEntry.financialRecords ?? []), ...selectedFinancialRecords],
+        conditionBreakdown: undefined,
+        notPresent: false,
+        updatedAt,
+        syncStatus: 'pending',
+      }
+      replacement.editHistory = [
+        ...(targetEntry.editHistory ?? []),
+        ...diffEntries(targetEntry, replacement, opts.actorId),
+      ].slice(-EDIT_HISTORY_LIMIT)
+      destination = replacement
+    } else {
+      const source = selectedUnits[0].entry
+      destination = {
+        ...source,
+        id: uid('en_'),
+        assetTypeId: targetAsset?.id ?? null,
+        isUnlistedItem: !targetAsset,
+        unlistedItemName: targetAsset ? undefined : customName,
+        quantity: selectedTags.length,
+        tagNumbers: selectedTags,
+        acceptedTagNumbers: selectedUnits.filter((unit) => unit.accepted).map((unit) => unit.tag),
+        itemDetails: selectedDetails,
+        serialNumbers: selectedDetails.map((detail) => detail.serialNumber.trim()).filter(Boolean),
+        brand: selectedDetails[0]?.brand ?? '',
+        model: selectedDetails[0]?.model ?? '',
+        photoIds: itemPhotoIds(selectedDetails),
+        financialRecords: selectedFinancialRecords,
+        conditionBreakdown: undefined,
+        notPresent: false,
+        deleted: false,
+        conflictWith: undefined,
+        editHistory: [
+          ...(source.editHistory ?? []),
+          {
+            field: 'assetType',
+            oldValue: [...new Set(selectedUnits.map((unit) => itemName(unit.entry, assetTypeById)))].join(', '),
+            newValue: targetName,
+            editedBy: opts.actorId,
+            editedAt: updatedAt,
+          },
+        ].slice(-EDIT_HISTORY_LIMIT),
+        updatedAt,
+        syncStatus: 'pending',
+      }
+    }
+
+    updatedEntries.push(destination)
+    await db.entries.bulkPut(updatedEntries)
+    return { changedItems: selectedUnits.length, changedEntries: updatedEntries.length }
+  })
+}
+
 /** Resolves a sync conflict by keeping the local record or the server's copy. */
 export async function resolveConflict(entryId: string, keep: 'mine' | 'theirs'): Promise<void> {
   const entry = await db.entries.get(entryId)

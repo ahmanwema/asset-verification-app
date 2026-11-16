@@ -7,6 +7,7 @@ import {
   MoveEntriesError,
   RetagRoomError,
   ValidationError,
+  changeSelectedAssetNames,
   convertToAssetType,
   deleteEntry,
   markNotPresent,
@@ -105,6 +106,89 @@ describe('saveEntry', () => {
   it('marks every write pending for sync', async () => {
     const entry = await saveEntry(draft())
     expect(entry.syncStatus).toBe('pending')
+  })
+})
+
+describe('changeSelectedAssetNames', () => {
+  it('splits selected tags, preserves their details, and later merges them into the target asset', async () => {
+    const entry = await saveEntry(draft({
+      quantity: 3,
+      itemDetails: [
+        { brand: 'Toyota', model: 'Coaster', serialNumber: 'BUS-1', photoIds: ['p1'], representativePhotoIds: [] },
+        { brand: 'Toyota', model: 'Dyna', serialNumber: 'TRUCK-2', photoIds: ['p2'], representativePhotoIds: [] },
+        { brand: 'FAW', model: 'Tiger', serialNumber: 'TRUCK-3', photoIds: ['p3'], representativePhotoIds: [] },
+      ],
+    }))
+    await db.entries.update(entry.id, {
+      financialRecords: [{
+        tagNumber: entry.tagNumbers[0],
+        acquisitionDate: '2025-01-01',
+        availableForUseDate: '2025-01-01',
+        originalCost: 10_000,
+        residualValue: 1_000,
+        usefulLifeMonths: 60,
+        depreciationMethod: 'diminishing_balance',
+        annualDepreciationRate: 20,
+        openingAccumulatedDepreciation: 0,
+        openingBalanceDate: '',
+        supplier: 'Dealer',
+        invoiceNumber: 'INV-1',
+        fundingSource: 'School',
+        notes: '',
+        updatedAt: Date.now(),
+        updatedBy: fx.inspector.id,
+      }],
+    })
+
+    const firstResult = await changeSelectedAssetNames({
+      roomId: fx.room.id,
+      actorId: fx.inspector.id,
+      selections: entry.tagNumbers.slice(0, 2).map((tagNumber) => ({ entryId: entry.id, tagNumber })),
+      target: { kind: 'catalog', assetTypeId: fx.table.id },
+    })
+
+    expect(firstResult.changedItems).toBe(2)
+    const chairRemainder = await db.entries.get(entry.id)
+    expect(chairRemainder?.tagNumbers).toEqual([entry.tagNumbers[2]])
+    expect(chairRemainder?.quantity).toBe(1)
+    expect(chairRemainder?.itemDetails?.[0].serialNumber).toBe('TRUCK-3')
+    expect(chairRemainder?.photoIds).toEqual(['p3'])
+
+    const tableEntry = (await db.entries.where('[roomId+assetTypeId]').equals([fx.room.id, fx.table.id]).toArray())
+      .find((row) => !row.deleted)
+    expect(tableEntry?.tagNumbers).toEqual(entry.tagNumbers.slice(0, 2))
+    expect(tableEntry?.itemDetails?.map((detail) => detail.serialNumber)).toEqual(['BUS-1', 'TRUCK-2'])
+    expect(tableEntry?.photoIds).toEqual(['p1', 'p2'])
+    expect(tableEntry?.financialRecords?.[0].tagNumber).toBe(entry.tagNumbers[0])
+
+    await changeSelectedAssetNames({
+      roomId: fx.room.id,
+      actorId: fx.inspector.id,
+      selections: [{ entryId: entry.id, tagNumber: entry.tagNumbers[2] }],
+      target: { kind: 'catalog', assetTypeId: fx.table.id },
+    })
+
+    expect((await db.entries.get(entry.id))?.deleted).toBe(true)
+    const merged = await db.entries.get(tableEntry!.id)
+    expect(merged?.quantity).toBe(3)
+    expect(merged?.tagNumbers).toEqual(entry.tagNumbers)
+    expect(merged?.itemDetails?.map((detail) => detail.serialNumber)).toEqual(['BUS-1', 'TRUCK-2', 'TRUCK-3'])
+  })
+
+  it('supports a school-preferred custom asset name for selected products only', async () => {
+    const entry = await saveEntry(draft({ quantity: 2 }))
+    await changeSelectedAssetNames({
+      roomId: fx.room.id,
+      actorId: fx.inspector.id,
+      selections: [{ entryId: entry.id, tagNumber: entry.tagNumbers[0] }],
+      target: { kind: 'custom', name: 'School Coaster Bus' },
+    })
+
+    const rows = (await db.entries.where('roomId').equals(fx.room.id).toArray()).filter((row) => !row.deleted)
+    expect(rows.find((row) => row.id === entry.id)?.quantity).toBe(1)
+    const custom = rows.find((row) => row.isUnlistedItem)
+    expect(custom?.unlistedItemName).toBe('School Coaster Bus')
+    expect(custom?.tagNumbers).toEqual([entry.tagNumbers[0]])
   })
 })
 

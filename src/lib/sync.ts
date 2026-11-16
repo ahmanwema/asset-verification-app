@@ -705,7 +705,12 @@ export async function ensureEntryPhotos(entryId: string): Promise<number> {
   const entry = await db.entries.get(entryId)
   if (!entry || entry.photoIds.length === 0) return 0
 
-  const held = new Set((await db.photos.where('entryId').equals(entryId).toArray()).map((p) => p.id))
+  // A correction can split one quantity card into two entries while keeping
+  // the same physical photo IDs. Presence is therefore determined by photo ID,
+  // not by the entryId written when the image was first captured.
+  const held = new Set(
+    (await db.photos.bulkGet(entry.photoIds)).filter((photo) => photo !== undefined).map((photo) => photo.id),
+  )
   const missing = entry.photoIds.filter((id) => !held.has(id))
   if (missing.length === 0) return 0
 

@@ -13,7 +13,13 @@ import {
   type LabelSearchTerm,
 } from '../lib/labels'
 import { photoBlob } from '../lib/photos'
-import { planRoomTagNames, retagRoomEntries, type RoomTagChange } from '../lib/entries'
+import {
+  changeSelectedAssetNames,
+  planRoomTagNames,
+  retagRoomEntries,
+  type AssetNameTarget,
+  type RoomTagChange,
+} from '../lib/entries'
 import { ensureEntryPhotos } from '../lib/sync'
 import { useSession } from '../state/session'
 import { useT } from '../i18n'
@@ -38,6 +44,20 @@ const MAX_VISIBLE = 200
 interface EditableTagChange extends RoomTagChange {
   selected: boolean
   description: string
+}
+
+interface EditableAssetNameItem {
+  entryId: string
+  tagNumber: string
+  selected: boolean
+  description: string
+  brand: string
+  serial: string
+}
+
+interface ChosenAssetName {
+  target: AssetNameTarget
+  label: string
 }
 
 // Several labels can belong to one inspection entry. Keep their initial photo
@@ -70,6 +90,12 @@ export default function LabelsPage() {
   const [retagRoom, setRetagRoom] = useState<{ id: string; name: string } | null>(null)
   const [tagChanges, setTagChanges] = useState<EditableTagChange[]>([])
   const [retagError, setRetagError] = useState<string | null>(null)
+  const [assetNameRoom, setAssetNameRoom] = useState<{ id: string; name: string } | null>(null)
+  const [assetNameItems, setAssetNameItems] = useState<EditableAssetNameItem[]>([])
+  const [assetNameQuery, setAssetNameQuery] = useState('')
+  const [assetNameFocused, setAssetNameFocused] = useState(false)
+  const [chosenAssetName, setChosenAssetName] = useState<ChosenAssetName | null>(null)
+  const [assetNameError, setAssetNameError] = useState<string | null>(null)
 
   const floors = useLiveQuery(async () => {
     if (!exercise) return []
@@ -84,6 +110,13 @@ export default function LabelsPage() {
       (a, b) => a.sortOrder - b.sortOrder,
     )
   }, [floorId])
+
+  const assetTypes = useLiveQuery(async () => {
+    if (!exercise) return []
+    return (await db.assetTypes.where('orgId').equals(exercise.orgId).toArray())
+      .filter((assetType) => assetType.active)
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+  }, [exercise?.orgId])
 
   const sheet = useLiveQuery(async () => {
     if (!exercise) return undefined
@@ -135,6 +168,14 @@ export default function LabelsPage() {
   const selectedTagNames = selectedTagChanges.map((change) => change.proposedTag.trim().toUpperCase())
   const tagChangesInvalid = selectedTagNames.some((tag) => !tag || /\s/.test(tag)) ||
     new Set(selectedTagNames).size !== selectedTagNames.length
+  const selectedAssetNameItems = assetNameItems.filter((item) => item.selected)
+  const assetNameSuggestions = useMemo(() => {
+    const needle = assetNameQuery.trim().toLocaleLowerCase()
+    return (assetTypes ?? []).filter((assetType) =>
+      !needle || [assetType.name, assetType.nameSw ?? '', assetType.code, assetType.category]
+        .some((value) => value.toLocaleLowerCase().includes(needle)),
+    )
+  }, [assetTypes, assetNameQuery])
 
   if (!exercise) return <EmptyState title={t('common.empty')} />
 
@@ -190,6 +231,56 @@ export default function LabelsPage() {
       setTimeout(() => setToast(null), 2600)
     } catch {
       setRetagError(t('labels.tagNamesFailed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function closeAssetNameEditor() {
+    setAssetNameRoom(null)
+    setAssetNameItems([])
+    setAssetNameQuery('')
+    setAssetNameFocused(false)
+    setChosenAssetName(null)
+    setAssetNameError(null)
+  }
+
+  function openAssetNameEditor(id: string, name: string) {
+    const labels = filteredLabels.filter((label) => label.roomId === id)
+    setAssetNameItems(labels.map((label) => ({
+      entryId: label.entryId,
+      tagNumber: label.tag,
+      selected: true,
+      description: label.description,
+      brand: label.brand,
+      serial: label.serial,
+    })))
+    setAssetNameRoom({ id, name })
+    setAssetNameQuery('')
+    setChosenAssetName(null)
+    setAssetNameError(null)
+  }
+
+  async function updateSelectedAssetNames() {
+    if (!assetNameRoom || !chosenAssetName || !inspector || selectedAssetNameItems.length === 0) return
+    setBusy(true)
+    setAssetNameError(null)
+    try {
+      const result = await changeSelectedAssetNames({
+        roomId: assetNameRoom.id,
+        actorId: inspector.id,
+        selections: selectedAssetNameItems.map((item) => ({
+          entryId: item.entryId,
+          tagNumber: item.tagNumber,
+        })),
+        target: chosenAssetName.target,
+      })
+      const roomName = assetNameRoom.name
+      closeAssetNameEditor()
+      setToast(t('labels.assetNamesUpdated', { n: result.changedItems, room: roomName }))
+      setTimeout(() => setToast(null), 2600)
+    } catch {
+      setAssetNameError(t('labels.assetNamesFailed'))
     } finally {
       setBusy(false)
     }
@@ -398,7 +489,17 @@ export default function LabelsPage() {
                       {[group.block, group.floor].filter(Boolean).join(' · ')}
                     </p>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                    {inspector?.role === 'admin' && (
+                      <button
+                        type="button"
+                        onClick={() => openAssetNameEditor(group.roomId, group.room)}
+                        disabled={busy}
+                        className="rounded-full border border-brand-300 bg-brand-50 px-2.5 py-1 text-[10px] font-bold text-brand-800 hover:bg-brand-100"
+                      >
+                        {t('labels.changeAssetNames')}
+                      </button>
+                    )}
                     {inspector?.role === 'admin' && (mismatchedTagsByRoom.get(group.roomId) ?? 0) > 0 && (
                       <button
                         type="button"
@@ -586,6 +687,180 @@ export default function LabelsPage() {
               {t('labels.updateSelectedTagNames', {
                 n: selectedTagChanges.length,
               })}
+            </Button>
+          </div>
+        </div>
+      </Sheet>
+      <Sheet
+        open={Boolean(assetNameRoom)}
+        onClose={closeAssetNameEditor}
+        title={t('labels.changeAssetNamesTitle')}
+      >
+        <div className="max-h-[calc(100dvh-7rem)] space-y-4 overflow-y-auto pr-1">
+          <p className="text-sm text-slate-700">
+            {t('labels.changeAssetNamesConfirm', {
+              room: assetNameRoom?.name ?? '',
+              n: assetNameItems.length,
+            })}
+          </p>
+          <p className="rounded-xl bg-brand-50 p-3 text-xs text-brand-900">{t('labels.changeAssetNamesHint')}</p>
+
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-semibold text-slate-500">
+              {t('labels.assetSelectionCount', {
+                selected: selectedAssetNameItems.length,
+                total: assetNameItems.length,
+              })}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                const select = !assetNameItems.every((item) => item.selected)
+                setAssetNameItems((current) => current.map((item) => ({ ...item, selected: select })))
+                setAssetNameError(null)
+              }}
+              className="text-xs font-bold text-brand-700"
+            >
+              {assetNameItems.every((item) => item.selected)
+                ? t('labels.clearAssetSelection')
+                : t('labels.selectAllAssets')}
+            </button>
+          </div>
+
+          <div className="max-h-[30dvh] space-y-2 overflow-y-auto pr-1">
+            {assetNameItems.map((item, index) => (
+              <label
+                key={`${item.entryId}:${item.tagNumber}`}
+                className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${
+                  item.selected ? 'border-brand-300 bg-brand-50/50' : 'border-slate-200 bg-white'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={item.selected}
+                  onChange={(event) => {
+                    const selected = event.target.checked
+                    setAssetNameItems((current) => current.map((candidate, candidateIndex) =>
+                      candidateIndex === index ? { ...candidate, selected } : candidate,
+                    ))
+                    setAssetNameError(null)
+                  }}
+                  className="mt-1 h-5 w-5 shrink-0 accent-brand-700"
+                  aria-label={t('labels.selectAssetForNameChange', { tag: item.tagNumber })}
+                />
+                <span className="min-w-0">
+                  <span className="block truncate font-mono text-xs font-bold text-slate-800">{item.tagNumber}</span>
+                  <span className="block truncate text-xs text-slate-600">{item.description}</span>
+                  {(item.brand || item.serial) && (
+                    <span className="block truncate text-[11px] text-slate-400">
+                      {[item.brand, item.serial].filter(Boolean).join(' · ')}
+                    </span>
+                  )}
+                </span>
+              </label>
+            ))}
+          </div>
+
+          <div className="space-y-2">
+            <div className="relative">
+              <Field label={t('labels.correctAssetName')} hint={t('labels.correctAssetNameHint')}>
+                <TextInput
+                  value={assetNameQuery}
+                  onChange={(event) => {
+                    setAssetNameQuery(event.target.value)
+                    setChosenAssetName(null)
+                    setAssetNameError(null)
+                  }}
+                  onFocus={() => setAssetNameFocused(true)}
+                  onBlur={() => setAssetNameFocused(false)}
+                  placeholder={t('labels.assetNamePlaceholder')}
+                  autoComplete="off"
+                  aria-autocomplete="list"
+                  aria-expanded={assetNameFocused && assetNameSuggestions.length > 0}
+                />
+              </Field>
+              {assetNameFocused && assetNameSuggestions.length > 0 && (
+                <div
+                  role="listbox"
+                  aria-label={t('labels.assetNameSuggestions')}
+                  className="absolute inset-x-0 top-full z-20 mt-1 max-h-52 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl"
+                >
+                  {assetNameSuggestions.map((assetType) => (
+                    <button
+                      key={assetType.id}
+                      type="button"
+                      role="option"
+                      aria-selected="false"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setChosenAssetName({
+                          target: { kind: 'catalog', assetTypeId: assetType.id },
+                          label: assetType.name,
+                        })
+                        setAssetNameQuery(assetType.name)
+                        setAssetNameFocused(false)
+                      }}
+                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-brand-50"
+                    >
+                      <span className="w-12 shrink-0 text-[10px] font-bold uppercase text-slate-400">{assetType.code}</span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold text-slate-800">{assetType.name}</span>
+                        <span className="block truncate text-[11px] text-slate-400">{assetType.category}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {assetNameQuery.trim() && !chosenAssetName && (
+              <button
+                type="button"
+                onClick={() => setChosenAssetName({
+                  target: { kind: 'custom', name: assetNameQuery.trim() },
+                  label: assetNameQuery.trim(),
+                })}
+                className="w-full rounded-xl border border-dashed border-brand-300 px-3 py-2.5 text-left text-sm font-bold text-brand-800 hover:bg-brand-50"
+              >
+                {t('labels.useCustomAssetName', { name: assetNameQuery.trim() })}
+              </button>
+            )}
+
+            {chosenAssetName && (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-brand-300 bg-brand-50 p-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase text-brand-600">{t('labels.selectedAssetName')}</p>
+                  <p className="truncate text-sm font-bold text-brand-900">{chosenAssetName.label}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChosenAssetName(null)
+                    setAssetNameQuery('')
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-xl text-brand-700 hover:bg-brand-100"
+                  aria-label={t('labels.removeSelectedAssetName')}
+                >
+                  &times;
+                </button>
+              </div>
+            )}
+          </div>
+
+          {assetNameError && (
+            <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-700">{assetNameError}</p>
+          )}
+
+          <div className="flex gap-2">
+            <Button variant="secondary" full onClick={closeAssetNameEditor} disabled={busy}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              full
+              onClick={() => void updateSelectedAssetNames()}
+              disabled={busy || selectedAssetNameItems.length === 0 || !chosenAssetName}
+            >
+              {t('labels.changeSelectedAssetNames', { n: selectedAssetNameItems.length })}
             </Button>
           </div>
         </div>

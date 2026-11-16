@@ -495,6 +495,35 @@ describe('moving recorded items to the correct room', () => {
       expect(movedChair?.itemDetails?.map((detail) => detail.tagNumber)).toEqual(movedChair?.tagNumbers)
       expect(movedChair?.acceptedTagNumbers).toContain('SC-MAIN-1F-P4-SCHOOL-001')
     })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Correct asset names' }))
+    const assetNameDialog = await screen.findByRole('dialog', { name: 'Correct asset names' })
+    expect(within(assetNameDialog).getByText('5 of 5 products selected')).toBeTruthy()
+    fireEvent.click(within(assetNameDialog).getByRole('button', { name: 'Clear selection' }))
+    const chairBeforeCorrection = (await db.entries.toArray()).find(
+      (entry) => !entry.deleted && entry.quantity === 3,
+    )!
+    fireEvent.click(within(assetNameDialog).getByLabelText(
+      `Select ${chairBeforeCorrection.tagNumbers[1]} for asset name correction`,
+    ))
+    fireEvent.click(within(assetNameDialog).getByLabelText(
+      `Select ${chairBeforeCorrection.tagNumbers[2]} for asset name correction`,
+    ))
+    const assetNameSearch = within(assetNameDialog).getByPlaceholderText('Type or choose an asset name')
+    fireEvent.focus(assetNameSearch)
+    fireEvent.change(assetNameSearch, { target: { value: 'Student Table' } })
+    fireEvent.click(within(assetNameDialog).getByRole('option', { name: /Student Table/ }))
+    fireEvent.click(within(assetNameDialog).getByRole('button', { name: 'Change 2 selected' }))
+
+    await waitFor(async () => {
+      const live = (await db.entries.toArray()).filter((entry) => !entry.deleted)
+      const chair = live.find((entry) => entry.assetTypeId === chairBeforeCorrection.assetTypeId)
+      const tableType = (await db.assetTypes.toArray()).find((assetType) => assetType.name === 'Student Table')
+      const table = live.find((entry) => entry.assetTypeId === tableType?.id)
+      expect(chair?.quantity).toBe(1)
+      expect(table?.quantity).toBe(4)
+      expect(table?.tagNumbers).toEqual(expect.arrayContaining(chairBeforeCorrection.tagNumbers.slice(1)))
+    })
   }, 20_000)
 })
 

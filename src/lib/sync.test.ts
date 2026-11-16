@@ -435,6 +435,12 @@ describe('photo download', () => {
 
     // Already held: no second request.
     expect(await ensureEntryPhotos(entry.id)).toBe(0)
+
+    // Correcting an asset name can split the tag into a new entry while the
+    // already-downloaded photo still records the original entryId.
+    const correctedId = 'en_corrected'
+    await db.entries.put({ ...entry, id: correctedId, photoIds: ['ph_1'] })
+    expect(await ensureEntryPhotos(correctedId)).toBe(0)
   })
 
   it('does nothing for an entry with no photos', async () => {
