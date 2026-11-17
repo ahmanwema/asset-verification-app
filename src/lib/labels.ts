@@ -241,6 +241,32 @@ export async function qrDataUrl(text: string, size = 160): Promise<string> {
   })
 }
 
+export interface LabelRoomSummary {
+  roomId: string
+  block: string
+  floor: string
+  room: string
+  count: number
+}
+
+/**
+ * The rooms present in a set of labels, in the order the labels already carry
+ * (block, then floor, then room), so each room can be offered for printing on
+ * its own.
+ */
+export function roomsInLabels(labels: LabelData[]): LabelRoomSummary[] {
+  const grouped = new Map<string, LabelRoomSummary>()
+  for (const label of labels) {
+    const current = grouped.get(label.roomId)
+    if (current) current.count += 1
+    else {
+      const { roomId, block, floor, room } = label
+      grouped.set(roomId, { roomId, block, floor, room, count: 1 })
+    }
+  }
+  return [...grouped.values()]
+}
+
 /** "Limited" is spelled out nowhere on a 50mm label; "Ltd" buys the line real space. */
 export function labelOrgName(organization: string): string {
   return organization.replace(/\bLimited\b\.?/gi, 'Ltd')

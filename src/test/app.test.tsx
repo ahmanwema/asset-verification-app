@@ -1412,3 +1412,58 @@ describe('bulk costing', () => {
     })
   })
 })
+
+describe('printing labels room by room', () => {
+  it('offers every room its own print shortcut and sends only that room to the printer', async () => {
+    const exercise = (await db.exercises.toArray())[0]
+    const inspector = (await db.inspectors.toArray())[0]
+    const floor = (await db.floors.toArray()).find((f) => f.name === '1st Floor')
+    const assetType = (await db.assetTypes.toArray()).find((type) => type.active)
+    if (!floor || !assetType) throw new Error('seed data missing')
+
+    const [roomA, roomB] = (await db.rooms.toArray())
+      .filter((room) => room.floorId === floor.id)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+
+    await saveEntry({
+      exerciseId: exercise.id, room: roomA, floor, assetType, isUnlistedItem: false, quantity: 2,
+      serialNumbers: [], model: '', brand: '', condition: 'G', remarks: '',
+      inspectorId: inspector.id, notPresent: false,
+    })
+    await saveEntry({
+      exerciseId: exercise.id, room: roomB, floor, assetType, isUnlistedItem: false, quantity: 3,
+      serialNumbers: [], model: '', brand: '', condition: 'G', remarks: '',
+      inspectorId: inspector.id, notPresent: false,
+    })
+
+    // The print sheet is written into a pop-up, so capture what it receives.
+    let printed = ''
+    const popup = {
+      document: { open: () => {}, write: (html: string) => { printed = html }, close: () => {} },
+    }
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+
+    await signIn()
+    fireEvent.click(await screen.findByText('Labels'))
+
+    // The shortcut is collapsed until asked for, then lists both rooms.
+    fireEvent.click(await screen.findByRole('button', { name: /Print one room at a time/ }))
+    // One shortcut in the room list, one on the room's own preview heading.
+    const printRoomA = await screen.findAllByRole('button', { name: `Print the 2 labels of ${roomA.name}` })
+    expect(printRoomA).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: `Print the 3 labels of ${roomB.name}` })).toHaveLength(2)
+
+    fireEvent.click(printRoomA[0])
+    await waitFor(() => expect(openSpy).toHaveBeenCalled())
+    await waitFor(() => expect(printed).toContain('<h1>'))
+
+    // Only the chosen room is on the sheet.
+    const tagsOf = async (roomId: string) =>
+      (await db.entries.toArray()).filter((e) => e.roomId === roomId).flatMap((e) => e.tagNumbers)
+    for (const tag of await tagsOf(roomA.id)) expect(printed).toContain(tag)
+    for (const tag of await tagsOf(roomB.id)) expect(printed).not.toContain(tag)
+    expect(printed.match(/class="room-heading"/g)).toHaveLength(1)
+
+    openSpy.mockRestore()
+  }, 15_000)
+})

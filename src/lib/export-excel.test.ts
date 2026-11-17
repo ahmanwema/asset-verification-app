@@ -465,6 +465,23 @@ describe('label data', () => {
     expect(html).toContain('room-section + .room-section { break-before: page')
   })
 
+  it('lists every room behind the labels so one room can be printed alone', async () => {
+    await populate()
+    const { collectLabels, roomsInLabels } = await import('./labels')
+    const sheet = await collectLabels({ exerciseId: fx.exercise.id, scope: 'exercise' })
+
+    const rooms = roomsInLabels(sheet.labels)
+    expect(rooms.length).toBeGreaterThan(0)
+    // Every label belongs to exactly one listed room, and the counts add up.
+    expect(rooms.reduce((sum, room) => sum + room.count, 0)).toBe(sheet.labels.length)
+    expect(new Set(rooms.map((room) => room.roomId)).size).toBe(rooms.length)
+    for (const room of rooms) {
+      expect(sheet.labels.filter((label) => label.roomId === room.roomId)).toHaveLength(room.count)
+    }
+
+    expect(roomsInLabels([])).toEqual([])
+  })
+
   it('heads each label with the owner name on a single line, shrunk to fit', async () => {
     const { labelOrgName, orgFontSize, renderLabelsHtml, collectLabels } = await import('./labels')
 
