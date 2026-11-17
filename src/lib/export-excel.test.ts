@@ -463,6 +463,13 @@ describe('label data', () => {
     expect(html).toContain('<h1>Reception</h1>')
     expect(html).toContain('Administration Block &middot; G. Floor')
     expect(html).toContain('room-section + .room-section { break-before: page')
+
+    // Each room heading carries its own custodian sign-off block.
+    expect(html.match(/class="custodian"/g)).toHaveLength(2)
+    expect(html).toContain('ROOM CUSTODIAN / MSIMAMIZI WA CHUMBA')
+    for (const field of ['Name / Jina', 'Phone / Simu', 'Signature / Saini', 'Date / Tarehe']) {
+      expect(html.match(new RegExp(field, 'g'))).toHaveLength(2)
+    }
   })
 
   it('lists every room behind the labels so one room can be printed alone', async () => {

@@ -344,6 +344,15 @@ export async function renderLabelsHtml(sheet: LabelSheet, origin = 'http://local
           <div class="room-kicker">ROOM / CHUMBA</div>
           <h1>${escapeHtml(roomName)}</h1>
           ${context ? `<div class="room-context">${context}</div>` : ''}
+          <div class="custodian">
+            <div class="custodian-kicker">ROOM CUSTODIAN / MSIMAMIZI WA CHUMBA</div>
+            <div class="fields">
+              <div class="field"><span>Name / Jina</span><i class="line name"></i></div>
+              <div class="field"><span>Phone / Simu</span><i class="line phone"></i></div>
+              <div class="field"><span>Signature / Saini</span><i class="line sign"></i></div>
+              <div class="field"><span>Date / Tarehe</span><i class="line date"></i></div>
+            </div>
+          </div>
         </header>
         <div class="label-grid">${cells}</div>
       </section>`
@@ -370,6 +379,16 @@ export async function renderLabelsHtml(sheet: LabelSheet, origin = 'http://local
   .room-kicker { color: #0f766e; font-size: 7pt; font-weight: 800; letter-spacing: 0.8pt; }
   .room-heading h1 { margin: 0.5mm 0 0; font-size: 16pt; line-height: 1.1; }
   .room-context { margin-top: 0.8mm; color: #334155; font-size: 9pt; font-weight: 600; }
+  /*
+   * The person answerable for the room signs the sheet that its tags were
+   * printed from, so the signed page is itself the record of handover.
+   */
+  .custodian { margin-top: 2.2mm; padding-top: 1.8mm; border-top: 0.3mm dashed #94a3b8; }
+  .custodian-kicker { color: #0f766e; font-size: 6.5pt; font-weight: 800; letter-spacing: 0.6pt; }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm 10mm; margin-top: 1.8mm; }
+  .field { display: flex; align-items: flex-end; gap: 1.5mm; font-size: 8pt; color: #334155; }
+  .field span { font-weight: 700; white-space: nowrap; }
+  .line { flex: 1; border-bottom: 0.35mm solid #475569; height: 3.8mm; }
   .label-grid { display: flex; flex-wrap: wrap; gap: 2mm; }
   .label {
     width: 50mm; height: 30mm; border: 0.3mm solid #000; border-radius: 1mm;
