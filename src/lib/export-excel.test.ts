@@ -464,6 +464,30 @@ describe('label data', () => {
     expect(html).toContain('Administration Block &middot; G. Floor')
     expect(html).toContain('room-section + .room-section { break-before: page')
   })
+
+  it('heads each label with the owner name on a single line, shrunk to fit', async () => {
+    const { labelOrgName, orgFontSize, renderLabelsHtml, collectLabels } = await import('./labels')
+
+    expect(labelOrgName('Sufa Schools Company Limited')).toBe('Sufa Schools Company Ltd')
+    expect(labelOrgName('ACME LIMITED.')).toBe('ACME Ltd')
+    expect(labelOrgName('Unlimited Horizons')).toBe('Unlimited Horizons')
+
+    // A short name keeps the maximum size; a long one is scaled down instead of wrapping.
+    expect(orgFontSize('Sufa Schools Company Ltd')).toBe(7)
+    expect(orgFontSize('A'.repeat(60))).toBeLessThan(4)
+    expect(orgFontSize('')).toBe(7)
+
+    await populate()
+    const sheet = await collectLabels({ exerciseId: fx.exercise.id, scope: 'exercise' })
+    const html = await renderLabelsHtml(
+      { ...sheet, organization: 'Sufa Schools Company Limited', labels: sheet.labels.slice(0, 1) },
+      'https://assets.example.org',
+    )
+
+    expect(html).toContain('<div class="org">Sufa Schools Company Ltd</div>')
+    expect(html).toContain('white-space: nowrap')
+    expect(html).toContain('font-size: 7pt')
+  })
 })
 
 describe('an item found in the wrong room', () => {

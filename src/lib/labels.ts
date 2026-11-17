@@ -241,6 +241,25 @@ export async function qrDataUrl(text: string, size = 160): Promise<string> {
   })
 }
 
+/** "Limited" is spelled out nowhere on a 50mm label; "Ltd" buys the line real space. */
+export function labelOrgName(organization: string): string {
+  return organization.replace(/\bLimited\b\.?/gi, 'Ltd')
+}
+
+/**
+ * The owner's name heads every label on one unbroken line, so the type is
+ * shrunk to whatever still fits the 47mm of printable width. Uppercase glyphs
+ * in the label font average about 0.62em, which keeps the estimate on the safe
+ * side of the real measurement.
+ */
+export function orgFontSize(organization: string, widthMm = 47): number {
+  const chars = organization.trim().length
+  if (chars === 0) return 7
+  const widthPt = widthMm * 2.8346
+  const fits = widthPt / (chars * 0.62)
+  return Math.max(3.6, Math.min(7, Math.floor(fits * 10) / 10))
+}
+
 /** Authenticated app page opened when a printed label is scanned. */
 export function labelTargetUrl(label: Pick<LabelData, 'entryId' | 'tag'>, origin: string): string {
   const url = new URL(`/asset/${encodeURIComponent(label.entryId)}`, origin)
@@ -262,16 +281,20 @@ export async function renderLabelsHtml(sheet: LabelSheet, origin = 'http://local
   const qrs = await Promise.all(
     sheet.labels.map((label) => qrDataUrl(labelTargetUrl(label, origin), 180)),
   )
+  const orgName = labelOrgName(sheet.organization)
+  const orgSize = orgFontSize(orgName)
   const cellFor = (l: LabelData, i: number) => `
       <div class="label">
-        <img class="qr" src="${qrs[i]}" alt="${escapeHtml(l.tag)}" />
-        <div class="body">
-          <div class="org">${escapeHtml(sheet.organization)}</div>
-          <div class="tag">${escapeHtml(l.tag)}</div>
-          <div class="desc">${escapeHtml(l.description)}</div>
-          ${l.brand ? `<div class="meta">Brand: ${escapeHtml(l.brand)}</div>` : ''}
-          <div class="loc">${escapeHtml([l.block, l.floor, l.room].filter(Boolean).join(' · '))}</div>
-          <div class="date">Verified ${escapeHtml(sheet.verifiedOn)}</div>
+        <div class="org">${escapeHtml(orgName)}</div>
+        <div class="row">
+          <img class="qr" src="${qrs[i]}" alt="${escapeHtml(l.tag)}" />
+          <div class="body">
+            <div class="tag">${escapeHtml(l.tag)}</div>
+            <div class="desc">${escapeHtml(l.description)}</div>
+            ${l.brand ? `<div class="meta">Brand: ${escapeHtml(l.brand)}</div>` : ''}
+            <div class="loc">${escapeHtml([l.block, l.floor, l.room].filter(Boolean).join(' · '))}</div>
+            <div class="date">Verified ${escapeHtml(sheet.verifiedOn)}</div>
+          </div>
         </div>
       </div>`
 
@@ -324,12 +347,21 @@ export async function renderLabelsHtml(sheet: LabelSheet, origin = 'http://local
   .label-grid { display: flex; flex-wrap: wrap; gap: 2mm; }
   .label {
     width: 50mm; height: 30mm; border: 0.3mm solid #000; border-radius: 1mm;
-    padding: 1.5mm; display: flex; gap: 1.5mm; align-items: center;
+    padding: 1.5mm; display: flex; flex-direction: column;
     page-break-inside: avoid; break-inside: avoid; overflow: hidden;
   }
+  .row { display: flex; gap: 1.5mm; align-items: center; min-height: 0; flex: 1; }
   .qr { width: 20mm; height: 20mm; flex: 0 0 20mm; }
-  .body { min-width: 0; line-height: 1.15; }
-  .org { font-size: 5.5pt; text-transform: uppercase; letter-spacing: 0.2pt; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .body { min-width: 0; line-height: 1.1; }
+  /*
+   * The owner's full name heads the label across its whole width, on one line.
+   * Its size is computed per sheet so even a long name never wraps or clips.
+   */
+  .org {
+    font-size: ${orgSize}pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1pt;
+    line-height: 1.2; text-align: center; white-space: nowrap; overflow: hidden;
+    padding-bottom: 0.5mm; margin-bottom: 0.8mm; border-bottom: 0.2mm solid #000;
+  }
   .tag { font-size: 10pt; font-weight: 700; font-family: ui-monospace, "Courier New", monospace; margin: 0.4mm 0; }
   .desc { font-size: 6.5pt; font-weight: 600; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .meta { font-size: 6pt; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
