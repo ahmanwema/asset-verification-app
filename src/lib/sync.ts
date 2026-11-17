@@ -239,6 +239,10 @@ export async function login(email: string, password: string): Promise<ServerAcco
       await setMeta('lastSyncAt', 0)
     }
     await setMeta('syncToken', data.token)
+    // The server has just stated this account's role, so the device's
+    // read-only standing is set from that rather than left over from
+    // whoever signed in here before.
+    await setMeta(READ_ONLY_KEY, data.inspector?.role === 'viewer')
     if (data.organization?.id) await syncNow()
     const account =
       data.inspector ?? {
@@ -301,7 +305,12 @@ interface SyncPayload {
   changes: Partial<Record<SyncTable, AnyRecord[]>>
   conflicts: Array<{ table: SyncTable; id: string; server: AnyRecord }>
   accepted: Partial<Record<SyncTable, string[]>>
+  /** Set by the server when the account may read but not write. */
+  readOnly?: boolean
 }
+
+/** Remembered so a read-only device stops offering a backlog it cannot send. */
+export const READ_ONLY_KEY = 'syncReadOnly'
 
 /**
  * How much of the backlog one request may carry.
@@ -425,12 +434,19 @@ export async function syncNow(): Promise<SyncResult> {
   const since = await getMeta<number>('lastSyncAt', 0)
   const activeOrgId = await getMeta<string | null>(ACTIVE_ORG_KEY, null)
 
+  // A read-only account pulls but never pushes. The server drops its writes
+  // regardless; not sending them keeps a viewer's device from retrying a
+  // backlog on every sync for ever.
+  const readOnly = await getMeta<boolean>(READ_ONLY_KEY, false)
+
   const outbox: Array<{ table: SyncTable; row: AnyRecord }> = []
-  for (const t of SYNC_TABLES) {
-    const pending = await tableFor(t).where('syncStatus').equals('pending').toArray()
-    for (const row of pending) {
-      if (!activeOrgId || (await belongsToActiveOrganization(t, row, activeOrgId))) {
-        outbox.push({ table: t, row: stripForPush(t, row) })
+  if (!readOnly) {
+    for (const t of SYNC_TABLES) {
+      const pending = await tableFor(t).where('syncStatus').equals('pending').toArray()
+      for (const row of pending) {
+        if (!activeOrgId || (await belongsToActiveOrganization(t, row, activeOrgId))) {
+          outbox.push({ table: t, row: stripForPush(t, row) })
+        }
       }
     }
   }
@@ -488,6 +504,7 @@ export async function syncNow(): Promise<SyncResult> {
       })
     }
 
+    if (body.readOnly && !readOnly) await setMeta(READ_ONLY_KEY, true)
     conflicts += await applyPushResult(body, activeOrgId, settledIds)
     pushed += round.count
     if (pull) payload = body
@@ -684,6 +701,128 @@ export async function createTeamAccount(input: NewAccount): Promise<{ ok: true; 
     const data = (await res.json().catch(() => ({}))) as { user?: { id: string }; error?: string }
     if (!res.ok) return { ok: false, error: data.error ?? 'failed' }
     return { ok: true, id: data.user?.id ?? '' }
+  } catch {
+    return { ok: false, error: 'offline' }
+  }
+}
+
+export interface Invite {
+  token: string
+  role: Role
+  label: string
+  createdAt: number
+  expiresAt: number | null
+  maxUses: number | null
+  usedCount: number
+  revoked: boolean
+}
+
+export interface InviteInfo {
+  organization: { id: string; name: string }
+  role: Role
+}
+
+/** The address a colleague opens to create their own account. */
+export function inviteUrl(token: string, origin = window.location.origin): string {
+  return `${origin}/join?token=${encodeURIComponent(token)}`
+}
+
+export async function createInvite(input: {
+  role: Role
+  label?: string
+  expiresInDays?: number
+  maxUses?: number | null
+}): Promise<{ ok: true; invite: Invite } | { ok: false; error: string }> {
+  const base = await getServerUrl()
+  const token = await getToken()
+  if (!token) return { ok: false, error: 'not-connected' }
+  try {
+    const res = await fetch(`${base}/invites`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(input),
+    })
+    const data = (await res.json().catch(() => ({}))) as { invite?: Invite; error?: string }
+    if (!res.ok || !data.invite) return { ok: false, error: data.error ?? 'failed' }
+    return { ok: true, invite: data.invite }
+  } catch {
+    return { ok: false, error: 'offline' }
+  }
+}
+
+export async function listInvites(): Promise<Invite[]> {
+  const base = await getServerUrl()
+  const token = await getToken()
+  if (!token) return []
+  try {
+    const res = await fetch(`${base}/invites`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!res.ok) return []
+    const data = (await res.json().catch(() => ({}))) as { invites?: Invite[] }
+    return data.invites ?? []
+  } catch {
+    return []
+  }
+}
+
+export async function revokeInvite(inviteToken: string): Promise<boolean> {
+  const base = await getServerUrl()
+  const token = await getToken()
+  if (!token) return false
+  try {
+    const res = await fetch(`${base}/invites?token=${encodeURIComponent(inviteToken)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+/** Reads an invite before anyone types anything, so the page can name the institution. */
+export async function inviteInfo(inviteToken: string): Promise<{ ok: true; info: InviteInfo } | { ok: false; error: string }> {
+  const base = await getServerUrl()
+  try {
+    const res = await fetch(`${base}/join?token=${encodeURIComponent(inviteToken)}`)
+    const data = (await res.json().catch(() => ({}))) as InviteInfo & { error?: string }
+    if (!res.ok) return { ok: false, error: data.error ?? 'invite-not-found' }
+    return { ok: true, info: { organization: data.organization, role: data.role } }
+  } catch {
+    return { ok: false, error: 'offline' }
+  }
+}
+
+/**
+ * Creates an account from an invite link. Mirrors registerOrganization: the
+ * caller resets the device and pulls the institution down, so no token is
+ * stored here.
+ */
+export async function joinWithInvite(input: {
+  token: string
+  name: string
+  email: string
+  password: string
+}): Promise<RegisterResult> {
+  const base = await getServerUrl()
+  try {
+    const res = await fetch(`${base}/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: input.token,
+        name: input.name.trim(),
+        email: input.email.trim().toLowerCase(),
+        password: input.password,
+      }),
+    })
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    if (!res.ok || !data.token) return { ok: false, error: String(data.error ?? 'join-failed') }
+    return {
+      ok: true,
+      token: String(data.token),
+      inspector: data.inspector as ServerAccount,
+      organization: data.organization as { id: string; name: string },
+    }
   } catch {
     return { ok: false, error: 'offline' }
   }

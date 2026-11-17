@@ -32,6 +32,8 @@ const { default: healthRoute } = await import('./health.js')
 const { default: photoRoute } = await import('./photos/[id].js')
 const { default: visionStatusRoute } = await import('./vision/status.js')
 const { default: visionIdentifyRoute } = await import('./vision/identify.js')
+const { default: invitesRoute } = await import('./invites.js')
+const { default: joinRoute } = await import('./join.js')
 
 let server
 let base
@@ -51,6 +53,8 @@ beforeAll(async () => {
     if (pathname === '/api/login' || pathname === '/api/auth') return authRoute(req, res)
     if (pathname === '/api/sync') return syncRoute(req, res)
     if (pathname === '/api/health') return healthRoute(req, res)
+    if (pathname === '/api/invites') return invitesRoute(req, res)
+    if (pathname === '/api/join') return joinRoute(req, res)
     if (pathname === '/api/vision/status') return visionStatusRoute(req, res)
     if (pathname === '/api/vision/identify') return visionIdentifyRoute(req, res)
     if (photo) {
@@ -259,5 +263,47 @@ describe('health route', () => {
     const body = await res.json()
     expect(body.ok).toBe(true)
     expect(Array.isArray(body.records)).toBe(true)
+  })
+})
+
+describe('invite routes', () => {
+  it('mints a link for an admin, and refuses an anonymous caller', async () => {
+    const anonymous = await fetch(`${base}/api/invites`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: 'viewer' }),
+    })
+    expect(anonymous.status).toBe(401)
+
+    const res = await fetch(`${base}/api/invites`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await token()}` },
+      body: JSON.stringify({ role: 'viewer', label: 'Headmaster' }),
+    })
+    expect(res.status).toBe(201)
+    const { invite } = await res.json()
+    expect(invite.role).toBe('viewer')
+
+    const listed = await fetch(`${base}/api/invites`, {
+      headers: { Authorization: `Bearer ${await token()}` },
+    })
+    expect((await listed.json()).invites.some((i) => i.token === invite.token)).toBe(true)
+
+    // The link describes itself to someone who has no account yet.
+    const info = await fetch(`${base}/api/join?token=${encodeURIComponent(invite.token)}`)
+    expect(info.status).toBe(200)
+    expect((await info.json()).role).toBe('viewer')
+
+    const revoked = await fetch(`${base}/api/invites?token=${encodeURIComponent(invite.token)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${await token()}` },
+    })
+    expect(revoked.status).toBe(200)
+    expect((await fetch(`${base}/api/join?token=${encodeURIComponent(invite.token)}`)).status).toBe(410)
+  })
+
+  it('reports an unknown link as not found, and guards the method', async () => {
+    expect((await fetch(`${base}/api/join?token=nope`)).status).toBe(404)
+    expect((await fetch(`${base}/api/join`, { method: 'PUT' })).status).toBe(405)
   })
 })

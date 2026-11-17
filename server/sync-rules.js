@@ -28,6 +28,18 @@ export const SYNC_TABLES = new Set([
 export const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
+ * The roles an account can hold. `viewer` is read-only: it exists for the
+ * people who are shown the register but never work in it — governors, heads,
+ * directors, auditors.
+ */
+export const ROLES = new Set(['admin', 'inspector', 'viewer'])
+
+/** Whether a role may change stored data at all. Enforced on the server. */
+export function roleCanWrite(role) {
+  return role === 'admin' || role === 'inspector'
+}
+
+/**
  * Decides what to do with one incoming record.
  *
  * Conflict rule: a record is a conflict when the server copy was last written
@@ -90,7 +102,7 @@ export function userFromInspector(inspector) {
     id: inspector.id || null,
     email,
     name: inspector.name || email,
-    role: inspector.role === 'admin' ? 'admin' : 'inspector',
+    role: ROLES.has(inspector.role) ? inspector.role : 'inspector',
     sha256: inspector.passwordHash || null,
   }
 }

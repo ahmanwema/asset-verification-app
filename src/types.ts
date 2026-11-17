@@ -2,7 +2,7 @@
 
 export type SyncStatus = 'pending' | 'synced' | 'conflict'
 export type Condition = 'G' | 'F' | 'P' | 'U'
-export type Role = 'admin' | 'inspector'
+export type Role = 'admin' | 'inspector' | 'viewer'
 export type ExerciseStatus = 'draft' | 'active' | 'completed'
 export type Lang = 'en' | 'sw'
 export type DepreciationMethod = 'diminishing_balance' | 'straight_line'

@@ -15,12 +15,17 @@ import { PGlite } from '@electric-sql/pglite'
 import { createStore } from './_lib/store.js'
 import {
   authenticate,
+  handleCreateInvite,
   handleCreateUser,
+  handleInviteInfo,
+  handleJoin,
+  handleListInvites,
   handleHealth,
   handleListUsers,
   handleLogin,
   handlePhotoUpload,
   handleRegister,
+  handleRevokeInvite,
   handleSync,
 } from './_lib/handlers.js'
 import { scryptHash, sha256 } from '../server/crypto.js'
@@ -44,7 +49,7 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
-  await pg.exec('DROP TABLE IF EXISTS records, users, tokens, photos, orgs CASCADE')
+  await pg.exec('DROP TABLE IF EXISTS records, users, tokens, photos, invites, orgs CASCADE')
   await store.init()
 })
 
@@ -90,7 +95,7 @@ function entry(over = {}) {
 describe('upgrading a database built before multi-tenancy', () => {
   /** Exactly the schema the single-tenant release created. */
   async function legacySchema() {
-    await pg.exec('DROP TABLE IF EXISTS records, users, tokens, photos, orgs CASCADE')
+    await pg.exec('DROP TABLE IF EXISTS records, users, tokens, photos, invites, orgs CASCADE')
     await pg.exec(`
       CREATE TABLE records (
         table_name   TEXT NOT NULL,
@@ -168,7 +173,7 @@ describe('schema', () => {
       `SELECT table_name FROM information_schema.tables
        WHERE table_schema = current_schema() ORDER BY table_name`,
     )
-    expect(rows.map((r) => r.table_name)).toEqual(['orgs', 'photos', 'records', 'tokens', 'users'])
+    expect(rows.map((r) => r.table_name)).toEqual(['invites', 'orgs', 'photos', 'records', 'tokens', 'users'])
   })
 
   it('keys records by tenant, so one institution cannot squat another id', async () => {
@@ -720,5 +725,186 @@ describe('health', () => {
     const { body } = await handleHealth(store, undefined)
     expect(body.ok).toBe(true)
     expect(body.records).toBeUndefined()
+  })
+})
+
+describe('read-only accounts', () => {
+  async function viewerIn(orgAdmin) {
+    const created = await handleCreateUser(store, orgAdmin, {
+      name: 'School Governor',
+      email: 'governor@sufa.ac.tz',
+      password: 'a-good-password',
+      role: 'viewer',
+    })
+    expect(created.status).toBe(201)
+    expect(created.body.user.role).toBe('viewer')
+    const session = await signIn('governor@sufa.ac.tz', 'a-good-password')
+    return await authenticate(store, session.token)
+  }
+
+  it('sees the whole register but cannot change a single record', async () => {
+    const admin = await authenticate(store, (await signIn()).token)
+    await handleSync(store, admin, {
+      since: 0,
+      changes: {
+        rooms: [{ id: 'rm_1', exerciseId: 'ex_1', name: 'Reception', updatedAt: 1 }],
+        entries: [entry()],
+      },
+    })
+
+    const viewer = await viewerIn(admin)
+    const { status, body } = await handleSync(store, viewer, {
+      since: 0,
+      changes: { entries: [entry({ id: 'en_hack', quantity: 999, updatedAt: 9999 })] },
+    })
+
+    expect(status).toBe(200)
+    expect(body.readOnly).toBe(true)
+    // Everything the institution holds comes down...
+    expect(body.changes.rooms).toHaveLength(1)
+    expect(body.changes.entries).toHaveLength(1)
+    // ...and nothing the viewer pushed went up.
+    expect(body.accepted.entries).toBeUndefined()
+    expect(await store.recordFor(viewer.orgId, 'entries', 'en_hack')).toBeNull()
+  })
+
+  it('cannot award itself a role by pushing its own inspector record', async () => {
+    const admin = await authenticate(store, (await signIn()).token)
+    const viewer = await viewerIn(admin)
+
+    await handleSync(store, viewer, {
+      since: 0,
+      changes: {
+        inspectors: [{ id: viewer.id, name: 'School Governor', email: viewer.email, role: 'admin', updatedAt: 2 }],
+      },
+    })
+
+    expect((await store.userByEmail(viewer.email)).role).toBe('viewer')
+  })
+
+  it('does not let an inspector promote itself either', async () => {
+    const admin = await authenticate(store, (await signIn()).token)
+    await handleCreateUser(store, admin, {
+      name: 'Field Inspector',
+      email: 'field@sufa.ac.tz',
+      password: 'a-good-password',
+      role: 'inspector',
+    })
+    const inspector = await authenticate(store, (await signIn('field@sufa.ac.tz', 'a-good-password')).token)
+
+    await handleSync(store, inspector, {
+      since: 0,
+      changes: {
+        inspectors: [{ id: inspector.id, name: 'Field Inspector', email: inspector.email, role: 'admin', updatedAt: 2 }],
+      },
+    })
+
+    expect((await store.userByEmail('field@sufa.ac.tz')).role).toBe('inspector')
+  })
+})
+
+describe('invite links', () => {
+  async function adminActor() {
+    return authenticate(store, (await signIn()).token)
+  }
+
+  it('lets a colleague create their own read-only account from the link', async () => {
+    const admin = await adminActor()
+    const created = await handleCreateInvite(store, admin, { role: 'viewer', label: 'School governor' })
+    expect(created.status).toBe(201)
+    const { token } = created.body.invite
+
+    // The page can name the institution and the role before anyone types.
+    const info = await handleInviteInfo(store, token)
+    expect(info.status).toBe(200)
+    expect(info.body.role).toBe('viewer')
+    expect(info.body.organization.id).toBe(admin.orgId)
+
+    const joined = await handleJoin(store, {
+      token,
+      name: 'Headmaster',
+      email: 'head@sufa.ac.tz',
+      password: 'a-good-password',
+    })
+    expect(joined.status).toBe(201)
+    expect(joined.body.inspector.role).toBe('viewer')
+
+    // Same institution as the admin's, and able to sign in straight away.
+    const user = await store.userByEmail('head@sufa.ac.tz')
+    expect(user.orgId).toBe(admin.orgId)
+    expect((await handleLogin(store, { email: 'head@sufa.ac.tz', password: 'a-good-password' })).status).toBe(200)
+
+    // The team sees the new account on their own devices.
+    const mirrored = await store.recordFor(admin.orgId, 'inspectors', user.id)
+    expect(mirrored.json.role).toBe('viewer')
+
+    expect((await handleListInvites(store, admin)).body.invites[0].usedCount).toBe(1)
+  })
+
+  it('hands out only the role the link was made with', async () => {
+    const admin = await adminActor()
+    const { body } = await handleCreateInvite(store, admin, { role: 'admin' })
+    // admin is not invitable; the request falls back to the safe role.
+    expect(body.invite.role).toBe('viewer')
+  })
+
+  it('refuses a revoked, expired or exhausted link', async () => {
+    const admin = await adminActor()
+
+    const revoked = (await handleCreateInvite(store, admin, { role: 'viewer' })).body.invite
+    expect((await handleRevokeInvite(store, admin, revoked.token)).status).toBe(200)
+    expect(
+      (await handleJoin(store, { token: revoked.token, name: 'A', email: 'a@x.com', password: 'a-good-password' })).body.error,
+    ).toBe('invite-revoked')
+
+    const limited = (await handleCreateInvite(store, admin, { role: 'viewer', maxUses: 1 })).body.invite
+    expect(
+      (await handleJoin(store, { token: limited.token, name: 'B', email: 'b@x.com', password: 'a-good-password' })).status,
+    ).toBe(201)
+    expect(
+      (await handleJoin(store, { token: limited.token, name: 'C', email: 'c@x.com', password: 'a-good-password' })).body.error,
+    ).toBe('invite-used-up')
+
+    const expired = (await handleCreateInvite(store, admin, { role: 'viewer' })).body.invite
+    await pg.query('UPDATE invites SET expires_at = $1 WHERE token = $2', [Date.now() - 1000, expired.token])
+    expect((await handleInviteInfo(store, expired.token)).body.error).toBe('invite-expired')
+
+    expect(
+      (await handleJoin(store, { token: 'not-a-token', name: 'D', email: 'd@x.com', password: 'a-good-password' })).status,
+    ).toBe(404)
+  })
+
+  it('is admin-only, and never crosses institutions', async () => {
+    const admin = await adminActor()
+    const loyola = await register('Loyola', 'loyola@example.com')
+
+    await handleCreateUser(store, admin, {
+      name: 'Field Inspector',
+      email: 'field2@sufa.ac.tz',
+      password: 'a-good-password',
+      role: 'inspector',
+    })
+    const inspector = await authenticate(store, (await signIn('field2@sufa.ac.tz', 'a-good-password')).token)
+    expect((await handleCreateInvite(store, inspector, { role: 'viewer' })).status).toBe(403)
+    expect((await handleListInvites(store, inspector)).status).toBe(403)
+
+    // One institution's admin cannot revoke or even see another's link.
+    const sufaInvite = (await handleCreateInvite(store, admin, { role: 'viewer' })).body.invite
+    expect((await handleRevokeInvite(store, loyola.actor, sufaInvite.token)).status).toBe(404)
+    expect((await handleListInvites(store, loyola.actor)).body.invites).toHaveLength(0)
+  })
+
+  it('refuses an email that already has an account, without spending a use', async () => {
+    const admin = await adminActor()
+    const invite = (await handleCreateInvite(store, admin, { role: 'viewer' })).body.invite
+
+    const taken = await handleJoin(store, {
+      token: invite.token,
+      name: 'Admin again',
+      email: ADMIN_EMAIL,
+      password: 'a-good-password',
+    })
+    expect(taken.status).toBe(409)
+    expect((await handleListInvites(store, admin)).body.invites[0].usedCount).toBe(0)
   })
 })

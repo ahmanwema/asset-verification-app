@@ -37,6 +37,7 @@ export function Field({
   error,
   edited,
   children,
+  className = '',
 }: {
   label: string
   hint?: string
@@ -44,12 +45,13 @@ export function Field({
   /** Text for the "edited" chip, e.g. t('history.edited'); omit when unchanged. */
   edited?: string
   children: ReactNode
+  className?: string
 }) {
   // The hint and the chip sit outside the <label> on purpose: nested, they become
   // part of the accessible name, so a screen reader would read the whole example
   // sentence back as the field's label.
   return (
-    <div>
+    <div className={className}>
       <label className="block">
         <span className="field-label">{label}</span>
         {children}
@@ -95,6 +97,19 @@ export function EmptyState({ title, hint, action }: { title: string; hint?: stri
       <p className="font-semibold text-slate-700">{title}</p>
       {hint && <p className="max-w-xs text-sm text-slate-500">{hint}</p>}
       {action}
+    </div>
+  )
+}
+
+/** Shown where a read-only account would otherwise see the save controls. */
+export function ReadOnlyNotice({ message }: { message: string }) {
+  return (
+    <div className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+      <svg viewBox="0 0 24 24" className="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="4" y="11" width="16" height="9" rx="2" strokeLinejoin="round" />
+        <path d="M8 11V8a4 4 0 0 1 8 0v3" strokeLinecap="round" />
+      </svg>
+      <span>{message}</span>
     </div>
   )
 }

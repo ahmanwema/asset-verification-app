@@ -27,7 +27,7 @@ export default function RoomPage() {
   const t = useT()
   const { lang } = useI18n()
   const navigate = useNavigate()
-  const { exercise, inspector } = useSession()
+  const { exercise, inspector, canEdit } = useSession()
   const [toast, setToast] = useState<string | null>(null)
   const [signSheet, setSignSheet] = useState(false)
   const [signNotes, setSignNotes] = useState('')
@@ -292,9 +292,11 @@ export default function RoomPage() {
 
       <SectionTitle
         action={
-          <Link to={`/room/${room.id}/item/new`} className="text-xs font-bold text-brand-700">
-            + {t('entry.addUnlisted')}
-          </Link>
+          canEdit ? (
+            <Link to={`/room/${room.id}/item/new`} className="text-xs font-bold text-brand-700">
+              + {t('entry.addUnlisted')}
+            </Link>
+          ) : undefined
         }
       >
         {t('entry.assetType')}
@@ -325,7 +327,7 @@ export default function RoomPage() {
                 entry={entry}
                 disabled={busy}
                 onOpen={() => navigate(`/room/${room.id}/item/${at.id}`)}
-                onNotPresent={() => void quickNotPresent(at.id)}
+                onNotPresent={canEdit ? () => void quickNotPresent(at.id) : undefined}
               />
             </li>
           )
@@ -356,7 +358,7 @@ export default function RoomPage() {
       )}
 
       <div className="space-y-2 pt-2">
-        {inspector?.role === 'admin' && entries.length > 0 && (
+        {inspector?.role === 'admin' && canEdit && entries.length > 0 && (
           <Button variant="secondary" full onClick={openMoveItems} disabled={busy}>
             {t('room.moveItems')}
           </Button>
@@ -366,15 +368,16 @@ export default function RoomPage() {
           {t('labels.print')} — {t('labels.room')}
         </Button>
 
-        {signoff ? (
-          <Button variant="danger" full onClick={() => void reopenRoom(room.id)} disabled={busy}>
-            {t('room.reopen')}
-          </Button>
-        ) : (
-          <Button full onClick={() => setSignSheet(true)} disabled={busy || entries.length === 0}>
-            {t('room.signoff')}
-          </Button>
-        )}
+        {canEdit &&
+          (signoff ? (
+            <Button variant="danger" full onClick={() => void reopenRoom(room.id)} disabled={busy}>
+              {t('room.reopen')}
+            </Button>
+          ) : (
+            <Button full onClick={() => setSignSheet(true)} disabled={busy || entries.length === 0}>
+              {t('room.signoff')}
+            </Button>
+          ))}
       </div>
 
       <Sheet open={moveSheet} onClose={() => setMoveSheet(false)} title={t('room.moveItems')}>

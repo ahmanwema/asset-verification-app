@@ -54,6 +54,21 @@ const SCHEMA = [
      user_id    TEXT NOT NULL,
      created_at BIGINT NOT NULL
    )`,
+  // An invite lets someone create their own account inside an existing
+  // institution. The token is the whole secret, so it is random, revocable,
+  // dated, and carries the role the holder will get — never one they choose.
+  `CREATE TABLE IF NOT EXISTS invites (
+     token      TEXT PRIMARY KEY,
+     org_id     TEXT NOT NULL,
+     role       TEXT NOT NULL DEFAULT 'viewer',
+     label      TEXT NOT NULL DEFAULT '',
+     created_by TEXT,
+     created_at BIGINT NOT NULL,
+     expires_at BIGINT,
+     max_uses   INTEGER,
+     used_count INTEGER NOT NULL DEFAULT 0,
+     revoked    BOOLEAN NOT NULL DEFAULT FALSE
+   )`,
   `CREATE TABLE IF NOT EXISTS photos (
      id           TEXT PRIMARY KEY,
      org_id       TEXT NOT NULL,
@@ -108,6 +123,7 @@ const INDEXES = [
   `CREATE INDEX IF NOT EXISTS users_org ON users (org_id)`,
   `CREATE INDEX IF NOT EXISTS photos_org ON photos (org_id)`,
   `CREATE INDEX IF NOT EXISTS tokens_created ON tokens (created_at)`,
+  `CREATE INDEX IF NOT EXISTS invites_org ON invites (org_id)`,
 ]
 
 /**
@@ -272,6 +288,85 @@ export function createStore(sql) {
         return null
       }
       return { id: row.id, orgId: row.org_id, email: row.email, name: row.name, role: row.role }
+    },
+
+    // ----------------------------------------------------------- invites ---
+    async createInvite({ token, orgId, role, label, createdBy, expiresAt, maxUses }) {
+      const now = Date.now()
+      await sql(
+        `INSERT INTO invites (token, org_id, role, label, created_by, created_at, expires_at, max_uses)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [token, orgId, role, label || '', createdBy || null, now, expiresAt || null, maxUses ?? null],
+      )
+      return { token, orgId, role, label: label || '', createdAt: now, expiresAt: expiresAt || null, maxUses: maxUses ?? null, usedCount: 0, revoked: false }
+    },
+
+    async inviteByToken(token) {
+      if (!token) return null
+      const { rows } = await sql(
+        `SELECT i.token, i.org_id, i.role, i.label, i.created_at, i.expires_at, i.max_uses,
+                i.used_count, i.revoked, o.name AS org_name
+           FROM invites i JOIN orgs o ON o.id = i.org_id
+          WHERE i.token = $1`,
+        [token],
+      )
+      const row = rows[0]
+      if (!row) return null
+      return {
+        token: row.token,
+        orgId: row.org_id,
+        orgName: row.org_name,
+        role: row.role,
+        label: row.label,
+        createdAt: Number(row.created_at),
+        expiresAt: row.expires_at === null ? null : Number(row.expires_at),
+        maxUses: row.max_uses === null ? null : Number(row.max_uses),
+        usedCount: Number(row.used_count),
+        revoked: row.revoked,
+      }
+    },
+
+    async invitesInOrg(orgId) {
+      const { rows } = await sql(
+        `SELECT token, role, label, created_at, expires_at, max_uses, used_count, revoked
+           FROM invites WHERE org_id = $1 ORDER BY created_at DESC`,
+        [orgId],
+      )
+      return rows.map((row) => ({
+        token: row.token,
+        role: row.role,
+        label: row.label,
+        createdAt: Number(row.created_at),
+        expiresAt: row.expires_at === null ? null : Number(row.expires_at),
+        maxUses: row.max_uses === null ? null : Number(row.max_uses),
+        usedCount: Number(row.used_count),
+        revoked: row.revoked,
+      }))
+    },
+
+    /**
+     * Counts one use, and only while the invite is still good. The condition
+     * lives in the UPDATE so two people opening the last place at the same
+     * moment cannot both be let through.
+     */
+    async consumeInvite(token, now = Date.now()) {
+      const { rows } = await sql(
+        `UPDATE invites SET used_count = used_count + 1
+          WHERE token = $1 AND revoked = FALSE
+            AND (expires_at IS NULL OR expires_at > $2)
+            AND (max_uses IS NULL OR used_count < max_uses)
+          RETURNING used_count`,
+        [token, now],
+      )
+      return rows.length > 0
+    },
+
+    async revokeInvite(orgId, token) {
+      const { rows } = await sql(
+        'UPDATE invites SET revoked = TRUE WHERE org_id = $1 AND token = $2 RETURNING token',
+        [orgId, token],
+      )
+      return rows.length > 0
     },
 
     // ----------------------------------------------------------- records ---

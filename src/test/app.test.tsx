@@ -1467,3 +1467,91 @@ describe('printing labels room by room', () => {
     openSpy.mockRestore()
   }, 15_000)
 })
+
+describe('a read-only account', () => {
+  async function signInAsViewer() {
+    const exercise = (await db.exercises.toArray())[0]
+    const inspector = (await db.inspectors.toArray())[0]
+    const floor = (await db.floors.toArray()).find((f) => f.name === '1st Floor')
+    const assetType = (await db.assetTypes.toArray()).find((type) => type.active)
+    const room = (await db.rooms.toArray()).find((r) => r.floorId === floor?.id)
+    if (!floor || !assetType || !room) throw new Error('seed data missing')
+
+    // Something already recorded, so the viewer has a register to look at.
+    await saveEntry({
+      exerciseId: exercise.id, room, floor, assetType, isUnlistedItem: false, quantity: 2,
+      serialNumbers: [], model: '', brand: '', condition: 'G', remarks: '',
+      inspectorId: inspector.id, notPresent: false,
+    })
+
+    await db.inspectors.add({
+      id: 'insp_viewer',
+      name: 'School Governor',
+      role: 'viewer',
+      email: 'governor@sufa.ac.tz',
+      active: true,
+      passwordHash: await sha256(SEED_PASSWORD),
+      updatedAt: Date.now(),
+      syncStatus: 'synced',
+    })
+
+    renderApp()
+    const email = await screen.findByLabelText(/email/i)
+    fireEvent.change(email, { target: { value: 'governor@sufa.ac.tz' } })
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: SEED_PASSWORD } })
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }))
+    return { room, assetType }
+  }
+
+  it('can read a room but is offered nothing that would change it', async () => {
+    const { room, assetType } = await signInAsViewer()
+
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText(room.name))
+
+    // The room's contents are there to read...
+    expect(await screen.findByText(assetType.name)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /print labels/i })).toBeTruthy()
+
+    // ...but nothing that writes is offered.
+    expect(screen.queryByText(/add unlisted item/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /^sign off/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /not present/i })).toBeNull()
+  })
+
+  it('opens an item without a way to save or delete it', async () => {
+    const { room, assetType } = await signInAsViewer()
+
+    fireEvent.click(await screen.findByText('1st Floor'))
+    fireEvent.click(await screen.findByText(room.name))
+    fireEvent.click(await screen.findByText(assetType.name))
+
+    expect(await screen.findByText('Your account can view the register but not change it.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^save$/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /save & next/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^delete$/i })).toBeNull()
+  })
+})
+
+describe('inviting colleagues by link', () => {
+  it('offers the admin a link to send, with the read-only role as the default', async () => {
+    await signIn()
+    fireEvent.click(await screen.findByText('Setup'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Team' }))
+
+    expect(await screen.findByText('Invite links')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Create link and copy it' })).toBeTruthy()
+
+    // Offline in the test environment, so there is nothing listed yet.
+    expect(await screen.findByText('No links created yet')).toBeTruthy()
+
+    // The link's role defaults to the safe one, and admin is not on offer.
+    const roleSelect = screen.getByLabelText('Role') as HTMLSelectElement
+    expect(roleSelect.value).toBe('viewer')
+    expect([...roleSelect.options].map((o) => o.value)).toEqual(['viewer', 'inspector'])
+
+    // The account form can still create any of the three directly.
+    const addRole = screen.getAllByRole('combobox').find((s) => (s as HTMLSelectElement).value === 'inspector')
+    expect([...(addRole as HTMLSelectElement).options].map((o) => o.value)).toContain('viewer')
+  })
+})

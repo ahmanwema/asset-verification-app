@@ -1,10 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, uid } from '../db/db'
 import { sha256 } from '../lib/hash'
 import { deriveCode, deriveRoomCode } from '../lib/tags'
 import { compressImage, formatBytes, storageEstimate } from '../lib/photos'
-import { createTeamAccount, getToken, resetLocalData, syncDiagnostics } from '../lib/sync'
+import {
+  createInvite,
+  createTeamAccount,
+  getToken,
+  inviteUrl,
+  listInvites,
+  resetLocalData,
+  revokeInvite,
+  syncDiagnostics,
+  type Invite,
+} from '../lib/sync'
 import type { StringKey } from '../i18n/strings'
 import { startFresh } from '../db/seed'
 import {
@@ -986,6 +996,7 @@ function TeamTab({ canEdit, flash }: { canEdit: boolean; flash: (m: string) => v
                 className="w-32 py-2 text-sm"
               >
                 <option value="inspector">{t('setup.role.inspector')}</option>
+                <option value="viewer">{t('setup.role.viewer')}</option>
                 <option value="admin">{t('setup.role.admin')}</option>
               </Select>
             </div>
@@ -1043,6 +1054,7 @@ function TeamTab({ canEdit, flash }: { canEdit: boolean; flash: (m: string) => v
             />
             <Select value={role} onChange={(e) => setRole(e.target.value as Role)} className="w-32">
               <option value="inspector">{t('setup.role.inspector')}</option>
+              <option value="viewer">{t('setup.role.viewer')}</option>
               <option value="admin">{t('setup.role.admin')}</option>
             </Select>
           </div>
@@ -1051,7 +1063,144 @@ function TeamTab({ canEdit, flash }: { canEdit: boolean; flash: (m: string) => v
           </Button>
         </Card>
       )}
+
+      {canEdit && <InviteLinks flash={flash} />}
     </div>
+  )
+}
+
+/**
+ * Invite links. An admin mints one, sends it, and the holder creates their own
+ * account — no password travels by message, and the role is fixed by the link
+ * rather than chosen by whoever opens it.
+ */
+function InviteLinks({ flash }: { flash: (m: string) => void }) {
+  const t = useT()
+  const [invites, setInvites] = useState<Invite[] | null>(null)
+  const [role, setRole] = useState<Role>('viewer')
+  const [label, setLabel] = useState('')
+  const [days, setDays] = useState('14')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => setInvites(await listInvites()), [])
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  async function create() {
+    setBusy(true)
+    try {
+      const result = await createInvite({
+        role,
+        label: label.trim(),
+        expiresInDays: Number(days) || 14,
+      })
+      if (!result.ok) {
+        flash(result.error === 'offline' ? t('invite.errOffline') : t('invite.errFailed'))
+        return
+      }
+      setLabel('')
+      await copy(result.invite.token)
+      await load()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function copy(token: string) {
+    const url = inviteUrl(token)
+    try {
+      await navigator.clipboard.writeText(url)
+      flash(t('invite.copied'))
+    } catch {
+      // Clipboard access is refused in some browsers; showing the address is
+      // still enough for the admin to copy it by hand.
+      flash(url)
+    }
+  }
+
+  async function revoke(token: string) {
+    if (!window.confirm(t('common.confirm'))) return
+    setBusy(true)
+    try {
+      if (await revokeInvite(token)) await load()
+      else flash(t('invite.errFailed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const live = (invite: Invite) =>
+    !invite.revoked && (invite.expiresAt === null || invite.expiresAt > Date.now())
+
+  return (
+    <Card className="space-y-3 p-4">
+      <SectionTitle>{t('invite.title')}</SectionTitle>
+      <p className="text-xs text-slate-500">{t('invite.hint')}</p>
+
+      <Field label={t('invite.label')} hint={t('common.optional')}>
+        <TextInput value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t('invite.labelPlaceholder')} />
+      </Field>
+      <div className="flex gap-2">
+        <Field label={t('setup.roleLabel')} className="flex-1">
+          <Select value={role} onChange={(e) => setRole(e.target.value as Role)}>
+            <option value="viewer">{t('setup.role.viewer')}</option>
+            <option value="inspector">{t('setup.role.inspector')}</option>
+          </Select>
+        </Field>
+        <Field label={t('invite.expiryDays')} className="w-28">
+          <TextInput type="number" min="1" max="180" value={days} onChange={(e) => setDays(e.target.value)} />
+        </Field>
+      </div>
+      <Button full onClick={() => void create()} disabled={busy}>
+        {t('invite.create')}
+      </Button>
+
+      {invites === null ? (
+        <p className="text-sm text-slate-500">{t('common.loading')}</p>
+      ) : invites.length === 0 ? (
+        <p className="text-sm text-slate-500">{t('invite.none')}</p>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {invites.map((invite) => (
+            <li key={invite.token} className="flex items-center gap-2 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-bold text-slate-800">
+                  {invite.label || t(`setup.role.${invite.role}` as StringKey)}
+                </p>
+                <p className="truncate text-[11px] text-slate-500">
+                  {t(`setup.role.${invite.role}` as StringKey)} ·{' '}
+                  {invite.revoked
+                    ? t('invite.revoked')
+                    : invite.expiresAt !== null && invite.expiresAt <= Date.now()
+                      ? t('invite.expired')
+                      : t('invite.used', { n: invite.usedCount })}
+                </p>
+              </div>
+              {live(invite) && (
+                <button
+                  type="button"
+                  onClick={() => void copy(invite.token)}
+                  className="shrink-0 rounded-full border border-brand-300 bg-brand-50 px-2.5 py-1 text-[11px] font-bold text-brand-800"
+                >
+                  {t('invite.copy')}
+                </button>
+              )}
+              {!invite.revoked && (
+                <button
+                  type="button"
+                  onClick={() => void revoke(invite.token)}
+                  disabled={busy}
+                  className="shrink-0 rounded-full border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-700 disabled:opacity-50"
+                >
+                  {t('invite.revoke')}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   )
 }
 

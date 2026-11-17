@@ -11,6 +11,8 @@ interface SessionValue {
   inspector: Inspector | null
   exercise: Exercise | null
   isAdmin: boolean
+  /** False for a viewer: a read-only account that may look but never change. */
+  canEdit: boolean
   login: (email: string, password: string) => Promise<boolean>
   logout: () => void
   selectExercise: (exerciseId: string) => Promise<void>
@@ -90,7 +92,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             orgId: activeOrgId ?? undefined,
             name: account.name || normalized,
             email: account.email || normalized,
-            role: account.role === 'admin' ? 'admin' : 'inspector',
+            role: account.role === 'viewer' ? 'viewer' : account.role === 'admin' ? 'admin' : 'inspector',
             active: true,
             passwordHash: hash,
             updatedAt: Date.now(),
@@ -139,6 +141,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       inspector,
       exercise,
       isAdmin: inspector?.role === 'admin',
+      canEdit: inspector ? inspector.role !== 'viewer' : false,
       login,
       logout,
       selectExercise,

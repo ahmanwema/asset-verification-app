@@ -24,6 +24,7 @@ import {
   EditedChip,
   EmptyState,
   Field,
+  ReadOnlyNotice,
   Segmented,
   Select,
   TextArea,
@@ -106,7 +107,7 @@ export default function EntryPage() {
   const t = useT()
   const { lang } = useI18n()
   const navigate = useNavigate()
-  const { exercise, inspector } = useSession()
+  const { exercise, inspector, canEdit } = useSession()
 
   const ctx = useLiveQuery(async () => {
     const room = await db.rooms.get(roomId)
@@ -1515,7 +1516,7 @@ export default function EntryPage() {
       )}
 
 
-      {isUnlisted && existing && assetTypes.length > 0 && (
+      {canEdit && isUnlisted && existing && assetTypes.length > 0 && (
         <Card className="space-y-2 p-4">
           <span className="field-label mb-0">{t('convert.title')}</span>
           <p className="text-xs text-slate-500">{t('convert.hint')}</p>
@@ -1609,21 +1610,25 @@ export default function EntryPage() {
         <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{t(error)}</p>
       )}
 
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          <Button variant="secondary" full onClick={() => void save(false)} disabled={busy || !breakdownOk}>
-            {t('common.save')}
-          </Button>
-          <Button full onClick={() => void save(true)} disabled={busy || !breakdownOk}>
-            {t('common.saveNext')}
-          </Button>
+      {canEdit ? (
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <Button variant="secondary" full onClick={() => void save(false)} disabled={busy || !breakdownOk}>
+              {t('common.save')}
+            </Button>
+            <Button full onClick={() => void save(true)} disabled={busy || !breakdownOk}>
+              {t('common.saveNext')}
+            </Button>
+          </div>
+          {existing && (
+            <Button variant="danger" full onClick={() => void remove()} disabled={busy}>
+              {t('common.delete')}
+            </Button>
+          )}
         </div>
-        {existing && (
-          <Button variant="danger" full onClick={() => void remove()} disabled={busy}>
-            {t('common.delete')}
-          </Button>
-        )}
-      </div>
+      ) : (
+        <ReadOnlyNotice message={t('role.readOnlyNotice')} />
+      )}
 
       <Toast message={toast} />
     </div>

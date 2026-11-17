@@ -8,6 +8,7 @@ import { SEED_PASSWORD } from '../db/seed'
 import { TenantSwitchPendingError } from '../lib/sync'
 import { Button, Field, TextInput } from '../components/ui'
 import RegisterPage from './RegisterPage'
+import JoinPage from './JoinPage'
 
 export default function LoginPage() {
   const t = useT()
@@ -18,6 +19,16 @@ export default function LoginPage() {
   const [error, setError] = useState<'credentials' | 'tenantPending' | null>(null)
   const [busy, setBusy] = useState(false)
   const [registering, setRegistering] = useState(false)
+  // An invite link lands here before anyone is signed in. The token is read
+  // once, so dismissing the join form does not spring it open again.
+  const [inviteToken, setInviteToken] = useState(() => {
+    try {
+      const url = new URL(window.location.href)
+      return url.pathname === '/join' ? (url.searchParams.get('token') ?? '') : ''
+    } catch {
+      return ''
+    }
+  })
 
   // The seeded sample is recognisable by its inspectors carrying the sample
   // password hash; a registered institution has none.
@@ -26,6 +37,18 @@ export default function LoginPage() {
     const all = await db.inspectors.toArray()
     return all.some((i) => i.passwordHash === hash)
   }, [])
+
+  if (inviteToken) {
+    return (
+      <JoinPage
+        token={inviteToken}
+        onBack={() => {
+          setInviteToken('')
+          window.history.replaceState({}, '', '/')
+        }}
+      />
+    )
+  }
 
   if (registering) return <RegisterPage onBack={() => setRegistering(false)} />
 
